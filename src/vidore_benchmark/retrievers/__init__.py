@@ -34,3 +34,5 @@ try:
     from .vision_retriever import VisionRetriever
 except ImportError:
     pass
+
+from .colbert_live_retriever import ColbertLiveRetriever

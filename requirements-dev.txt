@@ -160,4 +160,4 @@ xxhash==3.4.1
 yarl==1.9.4
 
 cassandra-driver
-colbert-live
+colbert-live==0.2.1

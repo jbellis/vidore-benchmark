@@ -134,6 +134,7 @@ class ColbertLiveRetriever(VisionRetriever):
             
             all_embeddings.extend(batch_embeddings)
 
+        all_embeddings = [torch.unsqueeze(e) for e in all_embeddings]
         print('sample doc embedding dimensions', all_embeddings[0].shape)
         return all_embeddings
 

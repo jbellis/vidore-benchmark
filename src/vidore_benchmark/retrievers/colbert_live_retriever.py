@@ -85,7 +85,11 @@ class ColbertLiveRetriever(VisionRetriever):
 
     def forward_queries(self, queries: List[str], batch_size: int, **kwargs) -> List[torch.Tensor]:
         logger.info(f"Encoding {len(queries)} queries")
-        return self.colbert_live.encode_query(queries)
+        encoded_queries = []
+        for query in tqdm(queries, desc="Encoding queries"):
+            encoded_query = self.colbert_live.encode_query(query)
+            encoded_queries.append(encoded_query)
+        return encoded_queries
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
         logger.info(f"Encoding {len(documents)} documents")

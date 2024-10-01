@@ -7,6 +7,7 @@ import psutil
 from tqdm import tqdm
 import io
 import uuid
+from cassandra.concurrent import execute_concurrent_with_args
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -68,15 +69,22 @@ class ColbertLiveDB(AstraCQL):
     def process_chunk_rows(self, result):
         return [torch.tensor(row.embedding) for row in result]
 
-    def add_document(self, doc_id: uuid.UUID, content: bytes, embeddings: List[torch.Tensor]):
-        # Insert document content
-        self.session.execute(self.insert_document_stmt, (doc_id, content))
+    def add_documents(self, contents: List[bytes], embeddings_list: List[torch.Tensor]) -> List[uuid.UUID]:
+        doc_ids = [uuid.uuid4() for _ in contents]
+        
+        # Insert documents
+        document_params = list(zip(doc_ids, contents))
+        execute_concurrent_with_args(self.session, self.insert_document_stmt, document_params)
 
         # Insert embeddings
-        for embedding_id, embedding in enumerate(embeddings):
-            self.session.execute(self.insert_embedding_stmt, (doc_id, embedding_id, embedding.tolist()))
+        embedding_params = []
+        for doc_id, doc_embeddings in zip(doc_ids, embeddings_list):
+            for embedding_id, embedding in enumerate(doc_embeddings):
+                embedding_params.append((doc_id, embedding_id, embedding.tolist()))
+        
+        execute_concurrent_with_args(self.session, self.insert_embedding_stmt, embedding_params)
 
-        return doc_id
+        return doc_ids
 
 @register_vision_retriever("colbert_live")
 class ColbertLiveRetriever(VisionRetriever):
@@ -116,17 +124,15 @@ class ColbertLiveRetriever(VisionRetriever):
             batch = documents[i:i+batch_size]
             batch_embeddings = self.colbert_live.encode_chunks(batch)
             
-            for doc, embeddings in zip(batch, batch_embeddings):
-                # Convert PIL Image to bytes
+            # Convert PIL Images to bytes
+            batch_contents = []
+            for doc in batch:
                 with io.BytesIO() as output:
                     doc.save(output, format="PNG")
-                    content = output.getvalue()
-                
-                # Generate a unique ID for the document
-                doc_id = uuid.uuid4()
-                
-                # Add document and its embeddings to the database
-                self.db.add_document(doc_id, content, embeddings)
+                    batch_contents.append(output.getvalue())
+            
+            # Add documents and their embeddings to the database
+            doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
             
             all_embeddings.extend(batch_embeddings)
 

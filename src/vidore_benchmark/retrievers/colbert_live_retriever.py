@@ -2,6 +2,7 @@
 from typing import List, Optional, Any, Tuple, Dict
 import torch
 from PIL import Image
+import os
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -65,7 +66,12 @@ class ColbertLiveRetriever(VisionRetriever):
         super().__init__()
         self.device = get_torch_device(device)
         self.model = Model.from_name_or_path(model_name)
-        self.db = ColbertLiveDB('colbert_live', self.model.dim, astra_db_id, astra_token)
+        
+        keyspace = os.environ.get('VIDORE_KEYSPACE')
+        if not keyspace:
+            raise ValueError("VIDORE_KEYSPACE environment variable is not set")
+        
+        self.db = ColbertLiveDB(keyspace, self.model.dim, astra_db_id, astra_token)
         self.colbert_live = ColbertLive(self.db, self.model)
 
     @property

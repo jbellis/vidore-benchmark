@@ -117,7 +117,7 @@ class ColbertLiveRetriever(VisionRetriever):
             encoded_queries.append(encoded_query)
         return encoded_queries
 
-    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[uuid.UUID]:
+    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
         logger.info(f"Encoding and storing {len(documents)} documents")
         all_embeddings = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
@@ -131,25 +131,20 @@ class ColbertLiveRetriever(VisionRetriever):
                     doc.save(output, format="PNG")
                     batch_contents.append(output.getvalue())
             
-            # Add documents and their embeddings to the database
-            doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
-            all_embeddings.extend(doc_ids)
+            all_embeddings.extend(batch_embeddings)
 
-            # Log memory usage
-            process = psutil.Process(os.getpid())
-            logger.info(f"Memory usage after batch {i//batch_size}: {process.memory_info().rss / 1024 / 1024:.2f} MB")
-
-        return all_embeddings
+        return ds
 
     def get_scores(
         self,
         list_emb_queries: List[torch.Tensor],
-        list_emb_documents: List[uuid.UUID],
-        batch_size: Optional[int] = None,
+        list_emb_documents: List[torch.Tensor],
+        batch_size: Optional[int] = 128,
     ) -> torch.Tensor:
-        logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
-        scores = []
-        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.colbert_live._search(query_emb, 5, None, None)
-            scores.append([score for doc_id, score in query_scores])
-        return torch.tensor(scores)
+        scores = self.colbert_live.model.processor.score(
+            list_emb_queries,
+            list_emb_documents,
+            batch_size=batch_size,
+            device=self.device,
+        )
+        return scores

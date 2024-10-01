@@ -138,8 +138,7 @@ class ColbertLiveRetriever(VisionRetriever):
             # Log memory usage
             process = psutil.Process(os.getpid())
             logger.info(f"Memory usage after batch {i//batch_size}: {process.memory_info().rss / 1024 / 1024:.2f} MB")
-            break
-        
+
         return all_embeddings
 
     def get_scores(

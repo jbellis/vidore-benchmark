@@ -101,9 +101,11 @@ class ColbertLiveRetriever(VisionRetriever):
         keyspace = os.environ.get('VIDORE_KEYSPACE')
         if not keyspace:
             raise ValueError("VIDORE_KEYSPACE environment variable is not set")
+        doc_pool_factor = int(os.environ.get('VIDORE_DOC_POOL', 0))
+        query_pool_distance = float(os.environ.get('VIDORE_QUERY_POOL', 0.0))
         
         self.db = ColbertLiveDB(keyspace, self.model.dim, astra_db_id, astra_token)
-        self.colbert_live = ColbertLive(self.db, self.model, 0, 0)
+        self.colbert_live = ColbertLive(self.db, self.model, doc_pool_factor, query_pool_distance)
 
     @property
     def use_visual_embedding(self) -> bool:

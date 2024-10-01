@@ -155,5 +155,7 @@ class ColbertLiveRetriever(VisionRetriever):
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
             query_scores = self.colbert_live._search(query_emb, 5, None, None)
-            scores.append([score for doc_id, score in query_scores])
+            score_dict = dict(query_scores)
+            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+            scores.append(query_scores)
         return torch.tensor(scores)

@@ -17,8 +17,6 @@ from colbert_live.colbert_live import ColbertLive
 from colbert_live.models import Model
 from colbert_live.db.astra import AstraCQL
 
-from src.vidore_benchmark.ocr.interfaces import ExtractedWord
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

@@ -138,6 +138,7 @@ class ColbertLiveRetriever(VisionRetriever):
             # Log memory usage
             process = psutil.Process(os.getpid())
             logger.info(f"Memory usage after batch {i//batch_size}: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+            break
         
         return all_embeddings
 
@@ -150,6 +151,6 @@ class ColbertLiveRetriever(VisionRetriever):
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.colbert_live._search(query_emb, k=5)
+            query_scores = self.colbert_live._search(query_emb, k=5, None, None)
             scores.append([score for doc_id, score in query_scores])
         return torch.tensor(scores)

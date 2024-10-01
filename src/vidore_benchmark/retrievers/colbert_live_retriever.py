@@ -7,7 +7,8 @@ import psutil
 from tqdm import tqdm
 import io
 import hashlib
-from cassandra.concurrent import execute_concurrent_with_args
+from colbert_live.db.astra import execute_concurrent_async
+from itertools import cycle
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -72,19 +73,18 @@ class ColbertLiveDB(AstraCQL):
     def add_documents(self, contents: List[bytes], embeddings_list: List[torch.Tensor]) -> List[str]:
         doc_ids = [hashlib.sha256(content).hexdigest() for content in contents]
         
-        # Insert documents
-        document_params = list(zip(doc_ids, contents))
-        execute_concurrent_with_args(self.session, self.insert_document_stmt, document_params)
-
-        # Insert embeddings
-        embedding_params = []
+        # Prepare statements with parameters
+        document_stmt_with_params = list(zip(cycle([self.insert_document_stmt]), zip(doc_ids, contents)))
+        
+        embedding_stmt_with_params = []
         for doc_id, doc_embeddings in zip(doc_ids, embeddings_list):
             for embedding_id, embedding in enumerate(doc_embeddings):
-                embedding_params.append((doc_id, embedding_id, embedding.tolist()))
+                embedding_stmt_with_params.append((self.insert_embedding_stmt, (doc_id, embedding_id, embedding.tolist())))
         
-        execute_concurrent_with_args(self.session, self.insert_embedding_stmt, embedding_params)
-
-        return doc_ids
+        # Execute statements asynchronously
+        future = execute_concurrent_async(self.session, document_stmt_with_params + embedding_stmt_with_params)
+        
+        return doc_ids, future
 
 @register_vision_retriever("colbert_live")
 class ColbertLiveRetriever(VisionRetriever):
@@ -135,14 +135,24 @@ class ColbertLiveRetriever(VisionRetriever):
 
         logger.info(f"Encoding and storing {len(documents)} documents")
         all_doc_ids = []
+        future = None
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
-            # encode the batch
+            # Encode the current batch
             batch = documents[i:i+batch_size]
             batch_contents = document_bytes[i:i+batch_size]
             batch_embeddings = self.colbert_live.encode_chunks(batch)
+
+            # Wait for the previous batch to complete
+            if future:
+                future.result()
+
             # Add documents and their embeddings to the database
-            doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
+            doc_ids, future = self.db.add_documents(batch_contents, batch_embeddings)
             all_doc_ids.extend(doc_ids)
+
+        # Wait for the last batch to complete
+        if future:
+            future.result()
 
         print('sample doc embedding dimensions', batch_embeddings[0].shape)
         return all_doc_ids

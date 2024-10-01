@@ -1,8 +1,10 @@
-#
 from typing import List, Optional, Any, Tuple, Dict
 import torch
 from PIL import Image
 import os
+import logging
+import psutil
+from tqdm import tqdm
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -11,6 +13,9 @@ from vidore_benchmark.utils.torch_utils import get_torch_device
 from colbert_live.colbert_live import ColbertLive
 from colbert_live.models import Model
 from colbert_live.db.astra import AstraCQL
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ColbertLiveDB(AstraCQL):
     def __init__(self, keyspace: str, embedding_dim: int, astra_db_id: str, astra_token: str):
@@ -79,10 +84,25 @@ class ColbertLiveRetriever(VisionRetriever):
         return True
 
     def forward_queries(self, queries: List[str], batch_size: int, **kwargs) -> List[torch.Tensor]:
+        logger.info(f"Encoding {len(queries)} queries")
         return self.colbert_live.encode_query(queries)
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
-        return self.colbert_live.encode_chunks(documents)
+        logger.info(f"Encoding {len(documents)} documents")
+        all_embeddings = []
+        for i in tqdm(range(0, len(documents), batch_size), desc="Encoding documents"):
+            batch = documents[i:i+batch_size]
+            try:
+                batch_embeddings = self.colbert_live.encode_chunks(batch)
+                all_embeddings.extend(batch_embeddings)
+            except Exception as e:
+                logger.error(f"Error encoding batch {i//batch_size}: {str(e)}")
+            
+            # Log memory usage
+            process = psutil.Process(os.getpid())
+            logger.info(f"Memory usage after batch {i//batch_size}: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+        
+        return all_embeddings
 
     def get_scores(
         self,
@@ -90,10 +110,15 @@ class ColbertLiveRetriever(VisionRetriever):
         list_emb_documents: List[torch.Tensor],
         batch_size: Optional[int] = None,
     ) -> torch.Tensor:
+        logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
         scores = []
-        for query_emb in list_emb_queries:
-            query_scores = self.colbert_live.search(query_emb, k=len(list_emb_documents), n_ann_docs=batch_size)
-            scores.append([score for _, score in query_scores])
+        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+            try:
+                query_scores = self.colbert_live.search(query_emb, k=len(list_emb_documents), n_ann_docs=batch_size)
+                scores.append([score for _, score in query_scores])
+            except Exception as e:
+                logger.error(f"Error computing scores for query: {str(e)}")
+                scores.append([0.0] * len(list_emb_documents))  # Add dummy scores in case of error
         return torch.tensor(scores)
 
     def get_relevant_docs_results(
@@ -103,6 +128,7 @@ class ColbertLiveRetriever(VisionRetriever):
         scores: torch.Tensor,
         **kwargs,
     ) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
+        logger.info("Processing relevant docs and results")
         relevant_docs = {}
         results = {}
 

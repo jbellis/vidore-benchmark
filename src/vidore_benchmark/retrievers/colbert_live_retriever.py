@@ -17,6 +17,8 @@ from colbert_live.colbert_live import ColbertLive
 from colbert_live.models import Model
 from colbert_live.db.astra import AstraCQL
 
+from src.vidore_benchmark.ocr.interfaces import ExtractedWord
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -118,9 +120,13 @@ class ColbertLiveRetriever(VisionRetriever):
         print(len(encoded_queries), 'sample query embedding dimensions', encoded_queries[0].shape)
         return encoded_queries
 
-    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
+    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[uuid.UUID]:
+        result = self.colbert_live.db.session.execute(f"SELECT doc_id FROM {self.colbert_live.db.keyspace}.documents LIMIT 1")
+        if result.one() is not None:
+            logger.info("Database is not empty, skipping document encoding")
+            raise NotImplementedError('retrieve document ids')
         logger.info(f"Encoding and storing {len(documents)} documents")
-        all_embeddings = []
+        all_doc_ids = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
             batch = documents[i:i+batch_size]
             batch_embeddings = self.colbert_live.encode_chunks(batch)
@@ -132,10 +138,12 @@ class ColbertLiveRetriever(VisionRetriever):
                     doc.save(output, format="PNG")
                     batch_contents.append(output.getvalue())
             
-            all_embeddings.extend(batch_embeddings)
+            # Add documents and their embeddings to the database
+            doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
+            all_doc_ids.extend(doc_ids)
 
-        print(len(all_embeddings), 'sample doc embedding dimensions', all_embeddings[0].shape)
-        return all_embeddings
+        print('sample doc embedding dimensions', batch_embeddings[0].shape)
+        return all_doc_ids
 
     def get_scores(
         self,

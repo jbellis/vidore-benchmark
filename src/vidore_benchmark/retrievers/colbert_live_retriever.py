@@ -115,7 +115,7 @@ class ColbertLiveRetriever(VisionRetriever):
         for query in tqdm(queries, desc="Encoding queries"):
             encoded_query = self.colbert_live.encode_query(query)
             encoded_queries.append(encoded_query)
-        print('sample query embedding dimensions', encoded_queries[0].shape)
+        print(len(encoded_queries), 'sample query embedding dimensions', encoded_queries[0].shape)
         return [torch.unsqueeze(e) for e in encoded_queries]
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
@@ -135,7 +135,7 @@ class ColbertLiveRetriever(VisionRetriever):
             all_embeddings.extend(batch_embeddings)
 
         all_embeddings = [torch.unsqueeze(e) for e in all_embeddings]
-        print('sample doc embedding dimensions', all_embeddings[0].shape)
+        print(len(all_embeddings), 'sample doc embedding dimensions', all_embeddings[0].shape)
         return all_embeddings
 
     def get_scores(

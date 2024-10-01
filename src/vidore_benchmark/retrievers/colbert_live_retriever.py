@@ -5,6 +5,8 @@ import os
 import logging
 import psutil
 from tqdm import tqdm
+import io
+import uuid
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -53,12 +55,28 @@ class ColbertLiveDB(AstraCQL):
         self.query_chunks_stmt = self.session.prepare(f"""
             SELECT embedding FROM {self.keyspace}.embeddings WHERE doc_id = ?
         """)
+        self.insert_document_stmt = self.session.prepare(f"""
+            INSERT INTO {self.keyspace}.documents (doc_id, content) VALUES (?, ?)
+        """)
+        self.insert_embedding_stmt = self.session.prepare(f"""
+            INSERT INTO {self.keyspace}.embeddings (doc_id, embedding_id, embedding) VALUES (?, ?, ?)
+        """)
 
     def process_ann_rows(self, result):
         return [(row.doc_id, row.similarity) for row in result]
 
     def process_chunk_rows(self, result):
         return [torch.tensor(row.embedding) for row in result]
+
+    def add_document(self, doc_id: uuid.UUID, content: bytes, embeddings: List[torch.Tensor]):
+        # Insert document content
+        self.session.execute(self.insert_document_stmt, (doc_id, content))
+
+        # Insert embeddings
+        for embedding_id, embedding in enumerate(embeddings):
+            self.session.execute(self.insert_embedding_stmt, (doc_id, embedding_id, embedding.tolist()))
+
+        return doc_id
 
 @register_vision_retriever("colbert_live")
 class ColbertLiveRetriever(VisionRetriever):
@@ -92,11 +110,24 @@ class ColbertLiveRetriever(VisionRetriever):
         return encoded_queries
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
-        logger.info(f"Encoding {len(documents)} documents")
+        logger.info(f"Encoding and storing {len(documents)} documents")
         all_embeddings = []
-        for i in tqdm(range(0, len(documents), batch_size), desc="Encoding documents"):
+        for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
             batch = documents[i:i+batch_size]
             batch_embeddings = self.colbert_live.encode_chunks(batch)
+            
+            for doc, embeddings in zip(batch, batch_embeddings):
+                # Convert PIL Image to bytes
+                with io.BytesIO() as output:
+                    doc.save(output, format="PNG")
+                    content = output.getvalue()
+                
+                # Generate a unique ID for the document
+                doc_id = uuid.uuid4()
+                
+                # Add document and its embeddings to the database
+                self.db.add_document(doc_id, content, embeddings)
+            
             all_embeddings.extend(batch_embeddings)
 
             # Log memory usage

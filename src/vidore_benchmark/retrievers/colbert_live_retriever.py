@@ -117,7 +117,7 @@ class ColbertLiveRetriever(VisionRetriever):
             encoded_queries.append(encoded_query)
         return encoded_queries
 
-    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
+    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[uuid.UUID]:
         logger.info(f"Encoding and storing {len(documents)} documents")
         all_embeddings = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
@@ -133,8 +133,7 @@ class ColbertLiveRetriever(VisionRetriever):
             
             # Add documents and their embeddings to the database
             doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
-            
-            all_embeddings.extend(batch_embeddings)
+            all_embeddings.extend(doc_ids)
 
             # Log memory usage
             process = psutil.Process(os.getpid())
@@ -145,37 +144,12 @@ class ColbertLiveRetriever(VisionRetriever):
     def get_scores(
         self,
         list_emb_queries: List[torch.Tensor],
-        list_emb_documents: List[torch.Tensor],
+        list_emb_documents: List[uuid.UUID],
         batch_size: Optional[int] = None,
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.colbert_live.search(query_emb, k=5)
-            scores.append([score for _, score in query_scores])
+            query_scores = self.colbert_live._search(query_emb, k=5)
+            scores.append([score for doc_id, score in query_scores])
         return torch.tensor(scores)
-
-    def get_relevant_docs_results(
-        self,
-        ds: Any,
-        queries: List[str],
-        scores: torch.Tensor,
-        **kwargs,
-    ) -> Tuple[Dict[str, float], Dict[str, Dict[str, float]]]:
-        logger.info("Processing relevant docs and results")
-        relevant_docs = {}
-        results = {}
-
-        for query, score_per_query in zip(queries, scores):
-            relevant_docs[query] = {str(ds["image_filename"][0]): 1}  # Assuming first document is relevant
-
-            for doc_idx, score in enumerate(score_per_query):
-                filename = str(ds["image_filename"][doc_idx])
-                score_passage = float(score.item())
-
-                if query in results:
-                    results[query][filename] = max(results[query].get(filename, 0), score_passage)
-                else:
-                    results[query] = {filename: score_passage}
-
-        return relevant_docs, results

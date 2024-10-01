@@ -115,7 +115,7 @@ class ColbertLiveRetriever(VisionRetriever):
         for query in tqdm(queries, desc="Encoding queries"):
             encoded_query = self.colbert_live.encode_query(query)
             encoded_queries.append(encoded_query)
-        encoded_queries = [torch.unsqueeze(e, 0) for e in encoded_queries]
+        encoded_queries = [torch.squeeze(e) for e in encoded_queries]
         print(len(encoded_queries), 'sample query embedding dimensions', encoded_queries[0].shape)
         return encoded_queries
 

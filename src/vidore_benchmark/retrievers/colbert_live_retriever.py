@@ -96,12 +96,9 @@ class ColbertLiveRetriever(VisionRetriever):
         all_embeddings = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Encoding documents"):
             batch = documents[i:i+batch_size]
-            try:
-                batch_embeddings = self.colbert_live.encode_chunks(batch)
-                all_embeddings.extend(batch_embeddings)
-            except Exception as e:
-                logger.error(f"Error encoding batch {i//batch_size}: {str(e)}")
-            
+            batch_embeddings = self.colbert_live.encode_chunks(batch)
+            all_embeddings.extend(batch_embeddings)
+
             # Log memory usage
             process = psutil.Process(os.getpid())
             logger.info(f"Memory usage after batch {i//batch_size}: {process.memory_info().rss / 1024 / 1024:.2f} MB")
@@ -117,12 +114,8 @@ class ColbertLiveRetriever(VisionRetriever):
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            try:
-                query_scores = self.colbert_live.search(query_emb, k=len(list_emb_documents), n_ann_docs=batch_size)
-                scores.append([score for _, score in query_scores])
-            except Exception as e:
-                logger.error(f"Error computing scores for query: {str(e)}")
-                scores.append([0.0] * len(list_emb_documents))  # Add dummy scores in case of error
+            query_scores = self.colbert_live.search(query_emb, k=5)
+            scores.append([score for _, score in query_scores])
         return torch.tensor(scores)
 
     def get_relevant_docs_results(

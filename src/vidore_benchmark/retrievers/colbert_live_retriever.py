@@ -6,7 +6,7 @@ import logging
 import psutil
 from tqdm import tqdm
 import io
-import uuid
+import hashlib
 from cassandra.concurrent import execute_concurrent_with_args
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
@@ -30,13 +30,13 @@ class ColbertLiveDB(AstraCQL):
         # Create tables and indexes
         self.session.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.keyspace}.documents (
-                doc_id uuid PRIMARY KEY,
+                doc_id text PRIMARY KEY,
                 content blob
             )
         """)
         self.session.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.keyspace}.embeddings (
-                doc_id uuid,
+                doc_id text,
                 embedding_id int,
                 embedding vector<float, {embedding_dim}>,
                 PRIMARY KEY ((doc_id), embedding_id)
@@ -71,8 +71,8 @@ class ColbertLiveDB(AstraCQL):
     def process_chunk_rows(self, result):
         return [torch.tensor(row.embedding) for row in result]
 
-    def add_documents(self, contents: List[bytes], embeddings_list: List[torch.Tensor]) -> List[uuid.UUID]:
-        doc_ids = [uuid.uuid4() for _ in contents]
+    def add_documents(self, contents: List[bytes], embeddings_list: List[torch.Tensor]) -> List[str]:
+        doc_ids = [hashlib.sha256(content).hexdigest() for content in contents]
         
         # Insert documents
         document_params = list(zip(doc_ids, contents))
@@ -120,24 +120,25 @@ class ColbertLiveRetriever(VisionRetriever):
         print(len(encoded_queries), 'sample query embedding dimensions', encoded_queries[0].shape)
         return encoded_queries
 
-    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[uuid.UUID]:
+    def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[str]:
+        # encode to bytes
+        document_bytes = []
+        for doc in documents:
+            with io.BytesIO() as output:
+                doc.save(output, format="PNG")
+                document_bytes.append(output.getvalue())
+
         result = self.colbert_live.db.session.execute(f"SELECT doc_id FROM {self.colbert_live.db.keyspace}.documents LIMIT 1")
         if result.one() is not None:
             logger.info("Database is not empty, skipping document encoding")
-            raise NotImplementedError('retrieve document ids')
+            return [hashlib.sha256(content).hexdigest() for content in document_bytes]
+
         logger.info(f"Encoding and storing {len(documents)} documents")
         all_doc_ids = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
-            batch = documents[i:i+batch_size]
-            batch_embeddings = self.colbert_live.encode_chunks(batch)
-            
-            # Convert PIL Images to bytes
-            batch_contents = []
-            for doc in batch:
-                with io.BytesIO() as output:
-                    doc.save(output, format="PNG")
-                    batch_contents.append(output.getvalue())
-            
+            # encode the batch
+            batch_contents = document_bytes[i:i+batch_size]
+            batch_embeddings = self.colbert_live.encode_chunks(batch_contents)
             # Add documents and their embeddings to the database
             doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
             all_doc_ids.extend(doc_ids)
@@ -146,15 +147,14 @@ class ColbertLiveRetriever(VisionRetriever):
         return all_doc_ids
 
     def get_scores(
-        self,
-        list_emb_queries: List[torch.Tensor],
-        list_emb_documents: List[torch.Tensor],
-        batch_size: Optional[int] = 128,
+            self,
+            list_emb_queries: List[torch.Tensor],
+            list_emb_documents: List[str],
+            batch_size: Optional[int] = None,
     ) -> torch.Tensor:
-        scores = self.colbert_live.model.processor.score(
-            list_emb_queries,
-            list_emb_documents,
-            batch_size=batch_size,
-            device=self.device,
-        )
-        return scores
+        logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
+        scores = []
+        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+            query_scores = self.colbert_live._search(query_emb, 5, None, None)
+            scores.append([score for doc_id, score in query_scores])
+        return torch.tensor(scores)

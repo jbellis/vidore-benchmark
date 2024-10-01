@@ -133,7 +133,7 @@ class ColbertLiveRetriever(VisionRetriever):
             
             all_embeddings.extend(batch_embeddings)
 
-        return ds
+        return all_embeddings
 
     def get_scores(
         self,

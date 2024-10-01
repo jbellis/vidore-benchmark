@@ -116,7 +116,7 @@ class ColbertLiveRetriever(VisionRetriever):
             encoded_query = self.colbert_live.encode_query(query)
             encoded_queries.append(encoded_query)
         print('sample query embedding dimensions', encoded_queries[0].shape)
-        return encoded_queries
+        return [torch.unsqueeze(e) for e in encoded_queries]
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
         logger.info(f"Encoding and storing {len(documents)} documents")

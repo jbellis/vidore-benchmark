@@ -88,6 +88,7 @@ class ColPaliRetriever(VisionRetriever):
                 embeddings_query = self.model(**batch_query)
                 qs.extend(list(torch.unbind(embeddings_query)))
 
+        print(len(qs), 'sample query embedding dimensions', qs[0].shape)
         return qs
 
     def forward_documents(self, documents: List[Image.Image], batch_size: int, **kwargs) -> List[torch.Tensor]:
@@ -104,6 +105,7 @@ class ColPaliRetriever(VisionRetriever):
                 batch_doc = {k: v.to(self.device) for k, v in batch_doc.items()}
                 embeddings_doc = self.model(**batch_doc)
             ds.extend(list(torch.unbind(embeddings_doc)))
+        print(len(ds), 'sample doc embedding dimensions', ds[0].shape)
         return ds
 
     def get_scores(

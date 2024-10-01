@@ -135,8 +135,9 @@ class ColbertLiveRetriever(VisionRetriever):
         all_doc_ids = []
         for i in tqdm(range(0, len(documents), batch_size), desc="Processing documents"):
             # encode the batch
+            batch = documents[i:i+batch_size]
             batch_contents = document_bytes[i:i+batch_size]
-            batch_embeddings = self.colbert_live.encode_chunks(batch_contents)
+            batch_embeddings = self.colbert_live.encode_chunks(batch)
             # Add documents and their embeddings to the database
             doc_ids = self.db.add_documents(batch_contents, batch_embeddings)
             all_doc_ids.extend(doc_ids)

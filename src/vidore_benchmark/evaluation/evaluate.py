@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
 from typing import Dict, List, Optional
 
@@ -31,6 +32,7 @@ def evaluate_dataset(
     - text_description: the text description (i.e. the page caption or the text chunks) if
         `use_visual_embedding` is False
     """
+    vision_retriever.use_dataset(ds)
 
     # Dataset: sanity check
     col_documents = "image" if vision_retriever.use_visual_embedding else "text_description"
@@ -63,13 +65,16 @@ def evaluate_dataset(
             emb_documents[idx] = emb_document
 
     # Get the similarity scores
+    start = time.time()
     scores = vision_retriever.get_scores(emb_queries, emb_documents, batch_size=batch_score)
+    elapsed = time.time() - start
 
     # Get the relevant documents and results
     relevant_docs, results = vision_retriever.get_relevant_docs_results(ds, queries, scores)
 
     # Compute the MTEB metrics
     metrics = vision_retriever.compute_metrics(relevant_docs, results)
+    metrics["elapsed"] = elapsed
 
     return metrics
 

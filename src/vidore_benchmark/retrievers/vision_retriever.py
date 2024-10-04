@@ -152,3 +152,12 @@ class VisionRetriever(ABC):
         }
 
         return scores
+
+    def use_dataset(self, ds):
+        pass
+
+    def get_save_one_path(self, output_path, dataset_name):
+        raise NotImplementedError()
+
+    def get_save_all_path(self, output_path):
+        raise NotImplementedError()

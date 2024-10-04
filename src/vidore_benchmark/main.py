@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Optional, cast
 
@@ -84,6 +85,7 @@ def evaluate_retriever(
     # Load the dataset
     if dataset_name is not None:
         dataset = cast(Dataset, load_dataset(dataset_name, split=split))
+        dataset.name = dataset_name
         metrics = {
             dataset_name: evaluate_dataset(
                 retriever,
@@ -96,11 +98,8 @@ def evaluate_retriever(
             )
         }
 
-        if use_token_pooling:
-            savepath = OUTPUT_DIR / f"{model_name.replace('/', '_')}_metrics_pool_factor_{pool_factor}.json"
-        else:
-            savepath = OUTPUT_DIR / f"{model_name.replace('/', '_')}_metrics.json"
-
+        pool_factor = int(os.environ.get('VIDORE_DOC_POOL'))
+        savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_name)
         with open(str(savepath), "w", encoding="utf-8") as f:
             json.dump(metrics, f)
 
@@ -117,7 +116,11 @@ def evaluate_retriever(
 
         for dataset_item in datasets:
             print(f"\n---------------------------\nEvaluating {dataset_item.item_id}")
+            savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_item.item_id)
+            if (os.path.exists(savepath)):
+                continue
             dataset = cast(Dataset, load_dataset(dataset_item.item_id, split=split))
+            dataset.name = dataset_item.item_id
             metrics = {
                 dataset_item.item_id: evaluate_dataset(
                     retriever,
@@ -131,22 +134,14 @@ def evaluate_retriever(
             }
             metrics_all.update(metrics)
 
-            if use_token_pooling:
-                savepath = savedir / f"{dataset_item.item_id.replace('/', '_')}_metrics_pool_factor_{pool_factor}.json"
-            else:
-                savepath = savedir / f"{dataset_item.item_id.replace('/', '_')}_metrics.json"
-
+            savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_item.item_id)
             with open(str(savepath), "w", encoding="utf-8") as f:
                 json.dump(metrics, f)
 
             print(f"Metrics saved to `{savepath}`")
             print(f"NDCG@5 for {model_name} on {dataset_item.item_id}: {metrics[dataset_item.item_id]['ndcg_at_5']}")
 
-        if use_token_pooling:
-            savepath_all = OUTPUT_DIR / f"{model_name.replace('/', '_')}_all_metrics_pool_factor_{pool_factor}.json"
-        else:
-            savepath_all = OUTPUT_DIR / f"{model_name.replace('/', '_')}_all_metrics.json"
-
+        savepath_all = retriever.get_save_all_path(OUTPUT_DIR)
         with open(str(savepath_all), "w", encoding="utf-8") as f:
             json.dump(metrics_all, f)
 

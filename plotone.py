@@ -3,6 +3,7 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
+from adjustText import adjust_text
 
 def parse_filename(filename):
     parts = filename.split('_')
@@ -36,6 +37,9 @@ def is_pareto_efficient(points):
 def plot_data(data_points):
     fig, ax = plt.subplots(figsize=(12, 8))
     
+    # Extract dataset name from the first data point
+    dataset_name = data_points[0][5]
+    
     # Group data points by querypool
     grouped_data = defaultdict(list)
     for point in data_points:
@@ -45,6 +49,7 @@ def plot_data(data_points):
     color_map = plt.cm.viridis
     colors = [color_map(i) for i in np.linspace(0, 1, len(grouped_data))]
     
+    texts = []
     for (querypool, points), color in zip(grouped_data.items(), colors):
         ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in points])
         
@@ -62,14 +67,17 @@ def plot_data(data_points):
         # Plot Pareto frontier
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')
         
-        # Annotate points
+        # Create annotation texts
         for ndcg, qps, _, ann, candidates, _ in points:
-            label = f"{querypool},{ann},{candidates}"
-            ax.annotate(label, (ndcg, qps), xytext=(5, 5), textcoords='offset points', fontsize=8)
+            label = f"{querypool},{ann},{candidates}={ndcg:.3f}"
+            texts.append(ax.text(ndcg, qps, label, fontsize=8))
+    
+    # Adjust text positions to minimize overlaps
+    adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle='->', color='red', lw=0.5))
     
     ax.set_xlabel('NDCG@5')
     ax.set_ylabel('QPS')
-    ax.set_title('NDCG@5 vs QPS')
+    ax.set_title(f'{dataset_name}: NDCG@5 vs QPS')
     ax.legend()
     
     plt.tight_layout()

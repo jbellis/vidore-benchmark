@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 import time
 from collections import OrderedDict
 from typing import Dict, List, Optional
@@ -53,7 +52,6 @@ def evaluate_dataset(
     # Get the embeddings for the queries and documents
     emb_queries = vision_retriever.forward_queries(queries, batch_size=batch_query)
     emb_documents = vision_retriever.forward_documents(documents, batch_size=batch_doc)
-    return {}
 
     if embedding_quantizer is not None:
         # NOTE: Cannot use batched quantization because the sequence lengths can be different.

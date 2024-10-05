@@ -80,6 +80,9 @@ def plot_data(data_points):
     ax.set_title(f'{dataset_name}: NDCG@5 vs QPS')
     ax.legend()
     
+    # Set y-axis to start from 0
+    ax.set_ylim(bottom=0)
+    
     plt.tight_layout()
     return fig
 

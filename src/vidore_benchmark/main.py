@@ -116,6 +116,7 @@ def evaluate_retriever(
 
         for dataset_item in datasets:
             print(f"\n---------------------------\nEvaluating {dataset_item.item_id}")
+
             savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_item.item_id)
             if (os.path.exists(savepath)):
                 continue
@@ -132,6 +133,8 @@ def evaluate_retriever(
                     embedding_pooler=embedding_pooler,
                 )
             }
+            continue
+
             metrics_all.update(metrics)
 
             savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_item.item_id)

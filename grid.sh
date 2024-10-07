@@ -21,7 +21,6 @@ for query_pool in "${VIDORE_QUERY_POOL[@]}"; do
             echo "VIDORE_DOC_POOL=$doc_pool, VIDORE_QUERY_POOL=$query_pool, VIDORE_N_ANN=$n_ann, VIDORE_N_MAXSIM=$n_maxsim"
             VIDORE_DOC_POOL=$doc_pool VIDORE_QUERY_POOL=$query_pool VIDORE_N_ANN=$n_ann VIDORE_N_MAXSIM=$n_maxsim \
             vidore-benchmark evaluate-retriever --model-name colbert_live --collection-name "vidore/vidore-benchmark-667173f98e70a1c0fa4db00d" --split test
-#              vidore-benchmark evaluate-retriever --model-name colbert_live --dataset-name vidore/arxivqa_test_subsampled --split test
             echo "----------------------------------------"
         done
     done

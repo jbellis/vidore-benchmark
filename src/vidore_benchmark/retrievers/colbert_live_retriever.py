@@ -1,13 +1,14 @@
-from typing import List, Optional, Any, Tuple, Dict
+from typing import Optional
 import torch
 from PIL import Image
 import os
 import logging
-import psutil
+from colbert.infra import ColBERTConfig
+from colbert.modeling.colbert import ColBERT, colbert_score_reduce
+from colbert.search.strided_tensor import StridedTensor
 from tqdm import tqdm
 import io
 import hashlib
-import pickle
 from typing import List
 from colbert_live.db.astra import execute_concurrent_async
 from itertools import cycle
@@ -18,7 +19,7 @@ from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 
 from colbert_live.colbert_live import ColbertLive
-from colbert_live.models import ColpaliModel
+from colbert_live.models import Model
 from colbert_live.db.astra import AstraCQL
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +103,30 @@ class ColbertLiveDB(AstraCQL):
 
         return doc_ids, future
 
+class CpuModelStub(Model):
+    def __init__(self):
+        super().__init__()
+        ColBERT.try_load_torch_extensions(False)
+
+    def encode_query(self, q):
+        raise NotImplementedError()
+
+    def encode_doc(self, chunks):
+        raise NotImplementedError()
+
+    def score(self, q, D_packed, D_lengths):
+        assert q.dim() == 2, q.size()
+        assert D_packed.dim() == 2, D_packed.size()
+        scores = D_packed @ q.to(dtype=D_packed.dtype).T
+        return ColBERT.segmented_maxsim(scores, D_lengths)
+
+    def to_device(self, T):
+        return T.cpu()
+
+    @property
+    def dim(self):
+        return 128
+
 @register_vision_retriever("colbert_live")
 class ColbertLiveRetriever(VisionRetriever):
     """
@@ -124,7 +149,7 @@ class ColbertLiveRetriever(VisionRetriever):
         keyspace = self.keyspace_name(ds.name)
 
         if not self.model:
-            self.model = ColpaliModel()
+            self.model = CpuModelStub()
         self.db = ColbertLiveDB(keyspace, self.model.dim, None, None)
         self.colbert_live = ColbertLive(self.db, self.model, self.doc_pool_factor, self.query_pool_distance)
 
@@ -135,10 +160,6 @@ class ColbertLiveRetriever(VisionRetriever):
     def use_visual_embedding(self) -> bool:
         return True
 
-    def _get_cache_path(self) -> str:
-        fname = ''.join([c if c.isalnum() else '_' for c in self.dataset_name.lower()])
-        return os.path.join(self.cache_dir, f"{fname}_queries.pkl")
-
     def forward_queries(self, queries: List[str], batch_size: int, **kwargs) -> List[torch.Tensor]:
         logger.info(f"Encoding {len(queries)} queries with batch_size={batch_size}")
         
@@ -148,7 +169,7 @@ class ColbertLiveRetriever(VisionRetriever):
             cache_file = os.path.join(self.cache_dir, f"{query_hash}.pt")
             
             if os.path.exists(cache_file):
-                encoded_query = torch.load(cache_file)
+                encoded_query = self.model.to_device(torch.load(cache_file))
             else:
                 encoded_query = self.colbert_live.encode_query(query)
                 torch.save(encoded_query, cache_file)

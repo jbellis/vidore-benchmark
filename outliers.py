@@ -40,7 +40,7 @@ def process_group(group_data):
     std_dev = np.std(residuals)
     
     for i, d in enumerate(group_data):
-        if residuals[i] > 2 * std_dev:
+        if residuals[i] > 1.5 * std_dev:
             print(d['filename'])
             # f"{d['filename']}: predicted {predictions[i]:.2f}, actual {d['elapsed']:.2f}")
 

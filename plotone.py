@@ -5,6 +5,7 @@ import numpy as np
 from collections import defaultdict
 from adjustText import adjust_text
 import argparse
+import itertools
 
 def parse_filename(filename):
     parts = filename.split('_')
@@ -47,12 +48,13 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
         key = point[5] if dataset_filter is None else point[2]
         grouped_data[key].append(point)
     
-    # Generate a color map
+    # Generate a color map and marker styles
     color_map = plt.cm.viridis
     colors = [color_map(i) for i in np.linspace(0, 1, len(grouped_data))]
+    markers = itertools.cycle(['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'H', '+', 'x'])
     
     texts = []
-    for (group_key, points), color in zip(grouped_data.items(), colors):
+    for (group_key, points), color, marker in zip(grouped_data.items(), colors, markers):
         ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in points])
         
         # Find Pareto optimal points
@@ -65,9 +67,9 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
         
         # Scatter plot (all points or only Pareto points)
         if plot_all:
-            scatter = ax.scatter(ndcg_values, qps_values, c=[color], label=group_key)
+            scatter = ax.scatter(ndcg_values, qps_values, c=[color], marker=marker, label=group_key)
         else:
-            scatter = ax.scatter(pareto_points[:, 0], pareto_points[:, 1], c=[color], label=group_key)
+            scatter = ax.scatter(pareto_points[:, 0], pareto_points[:, 1], c=[color], marker=marker, label=group_key)
         
         # Plot Pareto frontier
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')

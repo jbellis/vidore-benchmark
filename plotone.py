@@ -37,7 +37,7 @@ def is_pareto_efficient(points):
             is_efficient[i] = True
     return is_efficient
 
-def plot_data(data_points):
+def plot_data(data_points, plot_all=False):
     fig, ax = plt.subplots(figsize=(12, 8))
     
     # Extract dataset name from the first data point
@@ -56,9 +56,6 @@ def plot_data(data_points):
     for (querypool, points), color in zip(grouped_data.items(), colors):
         ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in points])
         
-        # Scatter plot for this querypool
-        scatter = ax.scatter(ndcg_values, qps_values, c=[color], label=f'querypool={querypool}')
-        
         # Find Pareto optimal points
         points_array = np.array(list(zip(ndcg_values, qps_values)))
         pareto_mask = is_pareto_efficient(points_array)
@@ -67,13 +64,20 @@ def plot_data(data_points):
         # Sort Pareto points by NDCG for line plot
         pareto_points = pareto_points[pareto_points[:, 0].argsort()]
         
+        # Scatter plot for this querypool (all points or only Pareto points)
+        if plot_all:
+            scatter = ax.scatter(ndcg_values, qps_values, c=[color], label=f'querypool={querypool}')
+        else:
+            scatter = ax.scatter(pareto_points[:, 0], pareto_points[:, 1], c=[color], label=f'querypool={querypool}')
+        
         # Plot Pareto frontier
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')
         
         # Create annotation texts
         for ndcg, qps, _, ann, candidates, _ in points:
-            label = f"{querypool},{ann},{candidates}={ndcg:.3f}"
-            texts.append(ax.text(ndcg, qps, label, fontsize=8))
+            if plot_all or (ndcg, qps) in pareto_points:
+                label = f"{querypool},{ann},{candidates}={ndcg:.3f}"
+                texts.append(ax.text(ndcg, qps, label, fontsize=8))
     
     # Adjust text positions to minimize overlaps
     adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle='->', color='red', lw=0.5))
@@ -92,6 +96,7 @@ def plot_data(data_points):
 def main():
     parser = argparse.ArgumentParser(description="Plot NDCG@5 vs QPS for dataset results.")
     parser.add_argument("--dataset", help="Filter results to match this dataset name", default=None)
+    parser.add_argument("--all", action="store_true", help="Plot all points, including non-Pareto-optimal ones")
     args = parser.parse_args()
 
     directory = 'outputs'
@@ -101,7 +106,7 @@ def main():
         print(f"No data points found for dataset: {args.dataset}")
         return
 
-    fig = plot_data(data_points)
+    fig = plot_data(data_points, plot_all=args.all)
     
     # Display the plot in a window
     plt.show()

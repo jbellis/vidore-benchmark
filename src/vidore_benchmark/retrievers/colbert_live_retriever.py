@@ -114,12 +114,6 @@ class CpuModelStub(Model):
     def encode_doc(self, chunks):
         raise NotImplementedError()
 
-    def score(self, q, D_packed, D_lengths):
-        assert q.dim() == 2, q.size()
-        assert D_packed.dim() == 2, D_packed.size()
-        scores = D_packed @ q.to(dtype=D_packed.dtype).T
-        return ColBERT.segmented_maxsim(scores, D_lengths)
-
     def to_device(self, T):
         return T.cpu()
 
@@ -228,7 +222,7 @@ class ColbertLiveRetriever(VisionRetriever):
 
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.colbert_live._search(query_emb, 100, n_ann_docs=self.n_ann_docs, n_maxsim_candidates=self.n_maxsim_candidates)
+            query_scores = self.colbert_live._search(query_emb, 100, n_ann_docs=self.n_ann_docs, n_maxsim_candidates=self.n_maxsim_candidates, params={})
             score_dict = dict(query_scores)
             query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
             scores.append(query_scores)

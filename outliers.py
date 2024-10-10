@@ -40,7 +40,7 @@ def process_group(group_data):
     std_dev = np.std(residuals)
     
     for i, d in enumerate(group_data):
-        if residuals[i] > 1.5 * std_dev:
+        if residuals[i] > 1.0 * std_dev:
             print(d['filename'])
             # f"{d['filename']}: predicted {predictions[i]:.2f}, actual {d['elapsed']:.2f}")
 
@@ -57,7 +57,7 @@ def main():
             group_key = (parsed['dataset'], parsed['docpool'])
             grouped_data[group_key].append(parsed)
     
-    for (dataset, docpool), group_data in grouped_data.items():
+    for (dataset, docpool), group_data in sorted(grouped_data.items(), key=lambda x: x[0][1]):
         if len(group_data) < 4:  # Minimum number of samples for regression
             print(f"Skipping group due to insufficient data (only {len(group_data)} samples)")
             continue

@@ -37,23 +37,21 @@ def is_pareto_efficient(points):
             is_efficient[i] = True
     return is_efficient
 
-def plot_data(data_points, plot_all=False):
+def plot_data(data_points, plot_all=False, dataset_filter=None):
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Extract dataset name from the first data point
-    dataset_name = data_points[0][5]
-    
-    # Group data points by querypool
+    # Group data points by dataset if no dataset filter, otherwise by querypool
     grouped_data = defaultdict(list)
     for point in data_points:
-        grouped_data[point[2]].append(point)
+        key = point[5] if dataset_filter is None else point[2]
+        grouped_data[key].append(point)
     
     # Generate a color map
     color_map = plt.cm.viridis
     colors = [color_map(i) for i in np.linspace(0, 1, len(grouped_data))]
     
     texts = []
-    for (querypool, points), color in zip(grouped_data.items(), colors):
+    for (group_key, points), color in zip(grouped_data.items(), colors):
         ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in points])
         
         # Find Pareto optimal points
@@ -64,17 +62,17 @@ def plot_data(data_points, plot_all=False):
         # Sort Pareto points by NDCG for line plot
         pareto_points = pareto_points[pareto_points[:, 0].argsort()]
         
-        # Scatter plot for this querypool (all points or only Pareto points)
+        # Scatter plot (all points or only Pareto points)
         if plot_all:
-            scatter = ax.scatter(ndcg_values, qps_values, c=[color], label=f'querypool={querypool}')
+            scatter = ax.scatter(ndcg_values, qps_values, c=[color], label=group_key)
         else:
-            scatter = ax.scatter(pareto_points[:, 0], pareto_points[:, 1], c=[color], label=f'querypool={querypool}')
+            scatter = ax.scatter(pareto_points[:, 0], pareto_points[:, 1], c=[color], label=group_key)
         
         # Plot Pareto frontier
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')
         
         # Create annotation texts
-        for ndcg, qps, _, ann, candidates, _ in points:
+        for ndcg, qps, querypool, ann, candidates, _ in points:
             if plot_all or (ndcg, qps) in pareto_points:
                 label = f"{querypool},{ann},{candidates}={ndcg:.3f}"
                 texts.append(ax.text(ndcg, qps, label, fontsize=8))
@@ -84,7 +82,8 @@ def plot_data(data_points, plot_all=False):
     
     ax.set_xlabel('NDCG@5')
     ax.set_ylabel('QPS')
-    ax.set_title(f'{dataset_name}: NDCG@5 vs QPS')
+    title = 'NDCG@5 vs QPS' if dataset_filter is None else f'{dataset_filter}: NDCG@5 vs QPS'
+    ax.set_title(title)
     ax.legend()
     
     # Set y-axis to start from 0
@@ -106,7 +105,7 @@ def main():
         print(f"No data points found for dataset: {args.dataset}")
         return
 
-    fig = plot_data(data_points, plot_all=args.all)
+    fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset)
     
     # Display the plot in a window
     plt.show()

@@ -11,14 +11,15 @@ def parse_filename(filename):
     candidates = int(parts[-1].split('.')[0])
     ann = float(parts[-2])
     querypool = float(parts[-3])
-    dataset_name = '_'.join(parts[:-3])
-    return dataset_name, querypool, ann, candidates
+    docpool = int(parts[-4])
+    dataset_name = '_'.join(parts[1:-4])  # Ignore the first part and last 4 parts
+    return dataset_name, docpool, querypool, ann, candidates
 
 def read_data(directory, dataset_filter=None):
     data_points = []
     for filename in os.listdir(directory):
         if filename.endswith('.pth'):
-            dataset_name, querypool, ann, candidates = parse_filename(filename)
+            dataset_name, docpool, querypool, ann, candidates = parse_filename(filename)
             if dataset_filter and dataset_filter not in dataset_name:
                 continue
             with open(os.path.join(directory, filename), 'r') as f:
@@ -26,7 +27,7 @@ def read_data(directory, dataset_filter=None):
                 ndcg_at_5 = data[next(iter(data))]['ndcg_at_5']
                 elapsed = data[next(iter(data))]['elapsed']
                 qps = 500 / elapsed
-                data_points.append((ndcg_at_5, qps, querypool, ann, candidates, dataset_name))
+                data_points.append((ndcg_at_5, qps, docpool, querypool, ann, candidates, dataset_name))
     return data_points
 
 def is_pareto_efficient(points):
@@ -40,7 +41,7 @@ def is_pareto_efficient(points):
 def plot_data(data_points, plot_all=False, dataset_filter=None):
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Group data points by dataset if no dataset filter, otherwise by querypool
+    # Group data points by dataset if no dataset filter, otherwise by docpool
     grouped_data = defaultdict(list)
     for point in data_points:
         key = point[5] if dataset_filter is None else point[2]
@@ -72,9 +73,9 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')
         
         # Create annotation texts
-        for ndcg, qps, querypool, ann, candidates, _ in points:
+        for ndcg, qps, docpool, querypool, ann, candidates, _ in points:
             if plot_all or (ndcg, qps) in pareto_points:
-                label = f"{querypool},{ann},{candidates}={ndcg:.3f}"
+                label = f"{docpool},{querypool},{ann},{candidates}={ndcg:.3f}"
                 texts.append(ax.text(ndcg, qps, label, fontsize=8))
     
     # Adjust text positions to minimize overlaps

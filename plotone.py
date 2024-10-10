@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import defaultdict
 from adjustText import adjust_text
+import argparse
 
 def parse_filename(filename):
     parts = filename.split('_')
@@ -13,11 +14,13 @@ def parse_filename(filename):
     dataset_name = '_'.join(parts[:-3])
     return dataset_name, querypool, ann, candidates
 
-def read_data(directory):
+def read_data(directory, dataset_filter=None):
     data_points = []
     for filename in os.listdir(directory):
         if filename.endswith('.pth'):
             dataset_name, querypool, ann, candidates = parse_filename(filename)
+            if dataset_filter and dataset_filter not in dataset_name:
+                continue
             with open(os.path.join(directory, filename), 'r') as f:
                 data = json.load(f)
                 ndcg_at_5 = data[next(iter(data))]['ndcg_at_5']
@@ -87,8 +90,17 @@ def plot_data(data_points):
     return fig
 
 def main():
+    parser = argparse.ArgumentParser(description="Plot NDCG@5 vs QPS for dataset results.")
+    parser.add_argument("--dataset", help="Filter results to match this dataset name", default=None)
+    args = parser.parse_args()
+
     directory = 'outputs'
-    data_points = read_data(directory)
+    data_points = read_data(directory, args.dataset)
+    
+    if not data_points:
+        print(f"No data points found for dataset: {args.dataset}")
+        return
+
     fig = plot_data(data_points)
     
     # Display the plot in a window

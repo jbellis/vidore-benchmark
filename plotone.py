@@ -19,7 +19,7 @@ def parse_filename(filename):
 def read_data(directory, dataset_filter=None):
     data_points = []
     for filename in os.listdir(directory):
-        if filename.endswith('.pth'):
+        if filename.endswith('.pth') and not filename.startswith('all'):
             dataset_name, docpool, querypool, ann, candidates = parse_filename(filename)
             if dataset_filter and dataset_filter not in dataset_name:
                 continue
@@ -45,7 +45,7 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
     # Group data points by dataset if no dataset filter, otherwise by docpool
     grouped_data = defaultdict(list)
     for point in data_points:
-        key = point[5] if dataset_filter is None else point[2]
+        key = point[6] if dataset_filter is None else point[2]  # Use dataset_name (index 6) when no filter
         grouped_data[key].append(point)
     
     # Generate a color map and marker styles

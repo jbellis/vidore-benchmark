@@ -6,6 +6,7 @@ from collections import defaultdict
 from adjustText import adjust_text
 import argparse
 import itertools
+from typing import List, Tuple
 
 def parse_filename(filename):
     parts = filename.split('_')
@@ -39,6 +40,17 @@ def is_pareto_efficient(points):
             is_efficient[i] = True
     return is_efficient
 
+def filter_tied_points(points: List[Tuple]) -> List[Tuple]:
+    filtered_points = []
+    points.sort(key=lambda x: (x[0], -x[1]))  # Sort by NDCG (ascending) then QPS (descending)
+    
+    for ndcg, group in itertools.groupby(points, key=lambda x: x[0]):
+        group_list = list(group)
+        best_point = group_list[0]  # First point is the one with highest QPS
+        filtered_points.append(best_point)
+
+    return filtered_points
+
 def plot_data(data_points, plot_all=False, dataset_filter=None):
     fig, ax = plt.subplots(figsize=(12, 8))
     
@@ -55,7 +67,10 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
     
     texts = []
     for (group_key, points), color, marker in zip(grouped_data.items(), colors, markers):
-        ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in points])
+        # Filter points
+        filtered_points = filter_tied_points(points)
+        
+        ndcg_values, qps_values = zip(*[(p[0], p[1]) for p in filtered_points])
         
         # Find Pareto optimal points
         points_array = np.array(list(zip(ndcg_values, qps_values)))
@@ -75,7 +90,7 @@ def plot_data(data_points, plot_all=False, dataset_filter=None):
         ax.plot(pareto_points[:, 0], pareto_points[:, 1], c=color, linestyle='--')
         
         # Create annotation texts
-        for ndcg, qps, docpool, querypool, ann, candidates, _ in points:
+        for ndcg, qps, docpool, querypool, ann, candidates, _ in filtered_points:
             if plot_all or (ndcg, qps) in pareto_points:
                 label = f"{docpool},{querypool},{ann},{candidates}={ndcg:.3f}"
                 texts.append(ax.text(ndcg, qps, label, fontsize=8))

@@ -11,7 +11,7 @@ from typing import List, Tuple
 def parse_filename(filename):
     parts = filename.split('_')
     candidates = int(parts[-1].split('.')[0])
-    ann = float(parts[-2])
+    ann = int(parts[-2])
     querypool = float(parts[-3])
     docpool = int(parts[-4])
     dataset_name = '_'.join(parts[1:-4])  # Ignore the first part and last 4 parts
@@ -86,13 +86,16 @@ def plot_data(data_points, plot_all=False, dataset_filter=None, groupby='docpool
             raise ValueError(f"Invalid groupby option: {groupby}")
         grouped_data[key].append(point)
     
+    # Sort the groups by name
+    sorted_groups = sorted(grouped_data.items(), key=lambda x: str(x[0]))
+    
     # Generate a color map and marker styles
     color_map = plt.cm.viridis
-    colors = [color_map(i) for i in np.linspace(0, 1, len(grouped_data))]
-    markers = itertools.cycle(['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'H', '+', 'x'])
+    colors = [color_map(i) for i in np.linspace(0, 1, len(sorted_groups))]
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'H', '+', 'x']
     
     texts = []
-    for (group_key, points), color, marker in zip(grouped_data.items(), colors, markers):
+    for (group_key, points), color, marker in zip(sorted_groups, colors, itertools.cycle(markers)):
         # Filter points
         filtered_points = filter_tied_points(points)
         

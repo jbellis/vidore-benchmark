@@ -17,6 +17,25 @@ def parse_filename(filename):
     dataset_name = '_'.join(parts[1:-4])  # Ignore the first part and last 4 parts
     return dataset_name, docpool, querypool, ann, candidates
 
+
+def n_queries(dataset_name):
+    if dataset_name.startswith('arxivqa'):
+        return 50
+    if dataset_name.startswith('docvqa'):
+        return 45
+    if dataset_name.startswith('infovqa'):
+        return 49
+    if dataset_name.startswith('tabfquad'):
+        return 28
+    if dataset_name.startswith('tatdqa'):
+        return 164
+    if dataset_name.startswith('shiftproject'):
+        return 10
+    if dataset_name.startswith('synthetic'):
+        return 10
+    raise ValueError(f"Unknown dataset: {dataset_name}")
+
+
 def read_data(directory, dataset_filter=None):
     data_points = []
     for filename in os.listdir(directory):
@@ -28,7 +47,7 @@ def read_data(directory, dataset_filter=None):
                 data = json.load(f)
                 ndcg_at_5 = data[next(iter(data))]['ndcg_at_5']
                 elapsed = data[next(iter(data))]['elapsed']
-                qps = 500 / elapsed
+                qps = n_queries(dataset_name) / elapsed
                 data_points.append((ndcg_at_5, qps, docpool, querypool, ann, candidates, dataset_name))
     return data_points
 
@@ -51,13 +70,20 @@ def filter_tied_points(points: List[Tuple]) -> List[Tuple]:
 
     return filtered_points
 
-def plot_data(data_points, plot_all=False, dataset_filter=None):
+def plot_data(data_points, plot_all=False, dataset_filter=None, groupby='docpool'):
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Group data points by dataset if no dataset filter, otherwise by docpool
+    # Group data points by dataset if no dataset filter, otherwise by groupby option
     grouped_data = defaultdict(list)
     for point in data_points:
-        key = point[6] if dataset_filter is None else point[2]  # Use dataset_name (index 6) when no filter
+        if dataset_filter is None:
+            key = point[6]  # Use dataset_name (index 6) when no filter
+        elif groupby == 'docpool':
+            key = point[2]  # Use docpool (index 2)
+        elif groupby == 'querypool':
+            key = point[3]  # Use querypool (index 3)
+        else:
+            raise ValueError(f"Invalid groupby option: {groupby}")
         grouped_data[key].append(point)
     
     # Generate a color map and marker styles
@@ -114,6 +140,8 @@ def main():
     parser = argparse.ArgumentParser(description="Plot NDCG@5 vs QPS for dataset results.")
     parser.add_argument("--dataset", help="Filter results to match this dataset name", default=None)
     parser.add_argument("--all", action="store_true", help="Plot all points, including non-Pareto-optimal ones")
+    parser.add_argument("--groupby", choices=['docpool', 'querypool'], default='docpool',
+                        help="Group results by docpool or querypool when using --dataset (default: docpool)")
     args = parser.parse_args()
 
     directory = 'outputs'
@@ -123,7 +151,7 @@ def main():
         print(f"No data points found for dataset: {args.dataset}")
         return
 
-    fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset)
+    fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset, groupby=args.groupby)
     
     # Display the plot in a window
     plt.show()

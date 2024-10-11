@@ -145,6 +145,7 @@ def main():
     parser.add_argument("--all", action="store_true", help="Plot all points, including non-Pareto-optimal ones")
     parser.add_argument("--groupby", choices=['docpool', 'querypool'], default='docpool',
                         help="Group results by docpool or querypool when using --dataset (default: docpool)")
+    parser.add_argument("--headless", action="store_true", help="Run in headless mode, save plot without displaying")
     args = parser.parse_args()
 
     directory = 'outputs'
@@ -156,17 +157,23 @@ def main():
 
     fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset, groupby=args.groupby)
     
-    # Display the plot in a window
-    plt.show()
-    
-    # Ask user if they want to save the plot
-    save_plot = input("Do you want to save the plot? (y/n): ").lower().strip()
-    if save_plot == 'y':
-        filename = input("Enter filename (default: ndcg_vs_qps_plot.png): ").strip()
-        if not filename:
-            filename = 'ndcg_vs_qps_plot.png'
+    if args.headless:
+        dataset_name = args.dataset if args.dataset else "all"
+        filename = f"{dataset_name}_{args.groupby}.png"
         fig.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Plot saved as '{filename}'")
+    else:
+        # Display the plot in a window
+        plt.show()
+        
+        # Ask user if they want to save the plot
+        save_plot = input("Do you want to save the plot? (y/n): ").lower().strip()
+        if save_plot == 'y':
+            filename = input("Enter filename (default: ndcg_vs_qps_plot.png): ").strip()
+            if not filename:
+                filename = 'ndcg_vs_qps_plot.png'
+            fig.savefig(filename, dpi=300, bbox_inches='tight')
+            print(f"Plot saved as '{filename}'")
 
 if __name__ == "__main__":
     main()

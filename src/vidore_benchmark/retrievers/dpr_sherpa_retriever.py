@@ -8,22 +8,17 @@ from typing import Optional
 
 import torch
 from PIL import Image
-from llmsherpa.readers import LayoutPDFReader
 from tqdm import tqdm
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 
+import google.generativeai as genai
+
 from .colbert_live_retriever import encode_to_bytes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def save_to_tmp_pdf(img: Image.Image, hash_str: str) -> str:
-    fname = '/tmp/' + hash_str + '.pdf'
-    img.save(fname, 'PDF', resolution=100.0)
-    return fname
 
 
 @register_vision_retriever("dpr_sherpa")
@@ -33,7 +28,7 @@ class DprSherpaRetriever(VisionRetriever):
     chunking the images.
     """
 
-    def __init__(self, device: str = "auto"):
+    def __init__(self, device: str = "auto", gemini_api_key: str = None):
         super().__init__()
         self.device = get_torch_device(device)
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
@@ -41,6 +36,8 @@ class DprSherpaRetriever(VisionRetriever):
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
         self.model_name = 'openai-v3-small'
+        
+        self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
 
     def use_dataset(self, ds):
         self.dataset_name = ds.name
@@ -76,32 +73,39 @@ class DprSherpaRetriever(VisionRetriever):
 
         def compute_sha256(content):
             return hashlib.sha256(content).hexdigest()
-
         with ThreadPoolExecutor() as executor:
-            document_hashes = list(executor.map(compute_sha256, document_bytes), total=len(document_bytes), desc="Computing SHA256")
+            document_hashes = list(executor.map(compute_sha256, document_bytes))
 
         logger.info(f"Chunking {len(documents)} documents")
-        llmsherpa_api_url = "https://readers.llmsherpa.com/api/document/developer/parseDocument?renderFormat=all"
-        pdf_reader = LayoutPDFReader(llmsherpa_api_url)
 
         for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="Processing documents"):
-            cache_file = os.path.join(self.document_cache_dir, f"{doc_hash}.json")
+            cache_file = os.path.join(self.document_cache_dir, f"{doc_hash}.txt")
             
             if os.path.exists(cache_file):
                 with open(cache_file, 'r') as f:
-                    chunks = json.load(f)
-                logger.info(f"Loaded cached chunks for document {doc_hash}")
+                    extracted_text = json.load(f)
+                logger.info(f"Loaded cached text for document {doc_hash}")
             else:
-                fname = save_to_tmp_pdf(doc_image, doc_hash)
-                doc = pdf_reader.read_pdf(fname)
-                chunks = doc.to_chunks()
-                
-                with open(cache_file, 'w') as f:
-                    json.dump(chunks, f, indent=2)
-                logger.info(f"Computed and cached chunks for document {doc_hash}")
+                # Extract text from the image using Gemini Flash
+                response = self.gemini_model.generate_content(
+                    [
+                        "Extract all the text from this image, preserving structure as much as possible.",
+                        doc_image
+                    ],
+                    generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048,)
+                )
+                try:
+                    extracted_text = response.text
+                except ValueError as e:
+                    print(e)
+                else:
+                    print(extracted_text)
+                    with open(cache_file, 'w') as f:
+                        json.dump(extracted_text, f, indent=2)
+                    logger.info(f"Extracted and cached text for document {doc_hash}")
 
-            # You can process the chunks here if needed
-            # print(chunks)
+            # You can process the extracted text here if needed
+            # print(extracted_text)
 
         return document_hashes
 

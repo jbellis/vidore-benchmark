@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 from typing import Optional
@@ -39,13 +40,14 @@ class DprSherpaRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
+        self.model_name = 'openai-v3-small'
 
     def use_dataset(self, ds):
         self.dataset_name = ds.name
         keyspace = self.keyspace_name(ds.name)
 
     def keyspace_name(self, dataset_name):
-        return ''.join([c if c.isalnum() else '_' for c in dataset_name.lower()]) + '_' + str(self.doc_pool_factor)
+        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_' + self.model_name).lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -76,16 +78,30 @@ class DprSherpaRetriever(VisionRetriever):
             return hashlib.sha256(content).hexdigest()
 
         with ThreadPoolExecutor() as executor:
-            document_hashes = list(tqdm(executor.map(compute_sha256, document_bytes), total=len(document_bytes), desc="Computing SHA256"))
+            document_hashes = list(executor.map(compute_sha256, document_bytes), total=len(document_bytes), desc="Computing SHA256")
 
         logger.info(f"Chunking {len(documents)} documents")
-        for doc_image, doc_hash in zip(documents, document_hashes):
-            llmsherpa_api_url = "https://readers.llmsherpa.com/api/document/developer/parseDocument?renderFormat=all"
-            pdf_reader = LayoutPDFReader(llmsherpa_api_url)
-            pdf_url = 'file://' + save_to_tmp_pdf(doc_image, doc_hash)
-            doc = pdf_reader.read_pdf(pdf_url)
-            chunks = doc.to_chunks()
-            print(chunks)
+        llmsherpa_api_url = "https://readers.llmsherpa.com/api/document/developer/parseDocument?renderFormat=all"
+        pdf_reader = LayoutPDFReader(llmsherpa_api_url)
+
+        for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="Processing documents"):
+            cache_file = os.path.join(self.document_cache_dir, f"{doc_hash}.json")
+            
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    chunks = json.load(f)
+                logger.info(f"Loaded cached chunks for document {doc_hash}")
+            else:
+                fname = save_to_tmp_pdf(doc_image, doc_hash)
+                doc = pdf_reader.read_pdf(fname)
+                chunks = doc.to_chunks()
+                
+                with open(cache_file, 'w') as f:
+                    json.dump(chunks, f, indent=2)
+                logger.info(f"Computed and cached chunks for document {doc_hash}")
+
+            # You can process the chunks here if needed
+            # print(chunks)
 
         return document_hashes
 

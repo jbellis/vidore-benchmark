@@ -36,3 +36,4 @@ except ImportError:
     pass
 
 from .colbert_live_retriever import ColbertLiveRetriever
+from .dpr_sherpa_retriever import DprSherpaRetriever

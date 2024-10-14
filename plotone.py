@@ -148,32 +148,55 @@ def main():
     parser.add_argument("--headless", action="store_true", help="Run in headless mode, save plot without displaying")
     args = parser.parse_args()
 
-    directory = 'outputs'
-    data_points = read_data(directory, args.dataset)
-    
-    if not data_points:
-        print(f"No data points found for dataset: {args.dataset}")
-        return
+    if args.dataset == 'all' and not args.headless:
+        raise ValueError("'all' dataset option is only available in headless mode")
 
-    fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset, groupby=args.groupby)
+    if args.dataset == 'all' and not args.groupby:
+        raise ValueError("'groupby' must be specified when using 'all' dataset option")
+
+    directory = 'outputs'
     
-    if args.headless:
-        dataset_name = args.dataset if args.dataset else "all"
-        filename = f"{dataset_name}_{args.groupby}.png"
-        fig.savefig(filename, dpi=300, bbox_inches='tight')
-        print(f"Plot saved as '{filename}'")
-    else:
-        # Display the plot in a window
-        plt.show()
+    if args.dataset == 'all' and args.headless:
+        # Get all unique dataset names
+        all_data_points = read_data(directory)
+        dataset_names = set(point[6] for point in all_data_points)
         
-        # Ask user if they want to save the plot
-        save_plot = input("Do you want to save the plot? (y/n): ").lower().strip()
-        if save_plot == 'y':
-            filename = input("Enter filename (default: ndcg_vs_qps_plot.png): ").strip()
-            if not filename:
-                filename = 'ndcg_vs_qps_plot.png'
+        for dataset in dataset_names:
+            data_points = [point for point in all_data_points if point[6] == dataset]
+            if not data_points:
+                print(f"No data points found for dataset: {dataset}")
+                continue
+            
+            fig = plot_data(data_points, plot_all=args.all, dataset_filter=dataset, groupby=args.groupby)
+            filename = f"{dataset}_{args.groupby}.png"
             fig.savefig(filename, dpi=300, bbox_inches='tight')
             print(f"Plot saved as '{filename}'")
+            plt.close(fig)
+    else:
+        data_points = read_data(directory, args.dataset)
+        
+        if not data_points:
+            print(f"No data points found for dataset: {args.dataset}")
+            return
+
+        fig = plot_data(data_points, plot_all=args.all, dataset_filter=args.dataset, groupby=args.groupby)
+        
+        if args.headless:
+            filename = f"{args.dataset}_{args.groupby}.png"
+            fig.savefig(filename, dpi=300, bbox_inches='tight')
+            print(f"Plot saved as '{filename}'")
+        else:
+            # Display the plot in a window
+            plt.show()
+            
+            # Ask user if they want to save the plot
+            save_plot = input("Do you want to save the plot? (y/n): ").lower().strip()
+            if save_plot == 'y':
+                filename = input("Enter filename (default: ndcg_vs_qps_plot.png): ").strip()
+                if not filename:
+                    filename = 'ndcg_vs_qps_plot.png'
+                fig.savefig(filename, dpi=300, bbox_inches='tight')
+                print(f"Plot saved as '{filename}'")
 
 if __name__ == "__main__":
     main()

@@ -83,6 +83,7 @@ class DprDB:
         return rows.one() is not None
 
 
+STELLA_MODEL = None
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
         tiktoken_model = tiktoken.encoding_for_model('text-embedding-3-small')
@@ -136,14 +137,23 @@ class DprSherpaRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
-        self.embeddings_model = 'gemini-004'
+        self.embeddings_model = 'stella'
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
 
     def use_dataset(self, ds):
         if ds.name.startswith('synthetic'):
             raise StopIteration('Reached synthetic datsets; stopping')
-        self.db = DprDB(self.keyspace_name(ds.name), 1536)
+
+        if self.embeddings_model == 'openai-v3-small':
+            dim = 1536
+        elif self.embeddings_model == 'gemini-004':
+            dim = 1024
+        elif self.embeddings_model == 'stella':
+            dim = 1024
+        else:
+            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
+        self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
         return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_' + self.embeddings_model).lower()])
@@ -241,7 +251,7 @@ class DprSherpaRetriever(VisionRetriever):
             logger.info(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
             
             encoded_docs = []
-            for i in range(0, len(texts_to_encode), batch_size):
+            for i in tqdm(range(0, len(texts_to_encode), batch_size), desc="Encoding documents"):
                 batch_texts = texts_to_encode[i:i+batch_size]
                 batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
                 encoded_docs.extend(batch_embeddings)

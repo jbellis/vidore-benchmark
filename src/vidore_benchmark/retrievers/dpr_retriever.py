@@ -249,14 +249,14 @@ class DprRetriever(VisionRetriever):
             else:
                 # Extract text from the image using Gemini Flash
                 try:
-                    extracted_text = self.extract_text(doc_image)
+                    extracted_text = self.extract_text_gemini(doc_image)
                 except ValueError as e:
                     if 'encoding error' in str(e):
                         # Cut the image resolution in half and try again
                         doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
                         logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
                         try:
-                            extracted_text = self.extract_text(doc_image)
+                            extracted_text = self.extract_text_gemini(doc_image)
                         except ValueError as e:
                             encoding_errors += 1
                     elif 'copyright' in str(e):
@@ -303,7 +303,7 @@ class DprRetriever(VisionRetriever):
 
         return document_hashes
 
-    def extract_text(self, doc_image):
+    def extract_text_gemini(self, doc_image: Image.Image) -> str:
         response = self.gemini_model.generate_content(
             [
                 "Extract all the text from this image, preserving structure as much as possible.",
@@ -311,8 +311,7 @@ class DprRetriever(VisionRetriever):
             ],
             generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048, )
         )
-        extracted_text = response.text
-        return extracted_text
+        return response.text
 
     def get_scores(
             self,

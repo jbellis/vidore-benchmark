@@ -66,18 +66,19 @@ class DprDB:
             ORDER BY embedding ANN OF ?
             LIMIT ?
         """)
+        self.exists_stmt = self.session.prepare("""
+            SELECT id FROM documents WHERE id = ?
+        """)
 
     def insert_documents(self, doc_params: list[tuple[str, str, list[float]]]):
-        futures = execute_concurrent_async(self.session, [(self.insert_stmt, params) for params in doc_params])
-        return futures
+        return execute_concurrent_async(self.session, [(self.insert_stmt, params) for params in doc_params])
 
     def search(self, query_embedding: list[float], k: int) -> list[tuple[str, float]]:
         rows = self.session.execute(self.search_stmt, (query_embedding, query_embedding, k))
         return [(row.id, row.similarity) for row in rows]
 
     def document_exists(self, doc_id: str) -> bool:
-        query = "SELECT 1 FROM documents WHERE id = %s"
-        rows = self.session.execute(query, (doc_id,))
+        rows = self.session.execute(self.exists_stmt, (doc_id,))
         return rows.one() is not None
 
 
@@ -220,12 +221,12 @@ class DprSherpaRetriever(VisionRetriever):
 
         # not very efficient since we're doing both the embedding and the insert one-at-a-time
         futures = []
-        for doc_text, doc_hash in tqdm(zip(doc_texts, document_hashes), desc="Embedding and inserting documents"):
+        for doc_text, doc_hash in tqdm(zip(doc_texts, document_hashes), total=len(doc_texts), desc=f"Inserting to {self.db.keyspace}"):
             if doc_text is None or self.db.document_exists(doc_hash):
                 continue
             doc_embeddings = get_embeddings(self.model_name, [doc_text], is_query=False)
-            futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embeddings)]))
-        
+            futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embeddings[0])]))
+
         for future in tqdm(futures, desc="Waiting for inserts to complete"):
             future.result()
 
@@ -250,9 +251,16 @@ class DprSherpaRetriever(VisionRetriever):
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
 
+        scores = []
+        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+            query_scores = self.db.search(query_emb, 100)
+            score_dict = dict(query_scores)
+            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+            scores.append(query_scores)
+        return torch.tensor(scores)
+
         # Default scores with the correct shape
-        # TODO replace this with q query to self.db
-        return torch.ones((len(list_emb_queries), len(list_emb_documents)))
+        # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
 
     def get_save_one_path(self, output_path, dataset_name):
         fname = f'{self.keyspace_name(dataset_name)}_{self.model_name}.pth'

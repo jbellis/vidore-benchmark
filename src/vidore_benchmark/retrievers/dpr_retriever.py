@@ -5,6 +5,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+import cohere
 import google.generativeai as genai
 import numpy as np
 import tiktoken
@@ -145,20 +146,18 @@ class DprRetriever(VisionRetriever):
     chunking the images.
     """
 
-    def __init__(self, device: str = "auto", gemini_api_key: str = None):
+    def __init__(self, device: str = "auto", gemini_api_key: str = None, cohere_api_key: str = None):
         super().__init__()
         self.device = get_torch_device(device)
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
-        self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3']
-        if self.embeddings_model not in valid_models:
-            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
+        self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
 
     def use_dataset(self, ds):
         if 'synthetic' in ds.name:
@@ -167,6 +166,21 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = ds.name
         dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
         os.makedirs(dataset_cache_dir, exist_ok=True)
+
+        if 'infovqa' in ds.name:
+            self.embeddings_model = 'stella'
+        elif 'docvqa' in ds.name:
+            self.embeddings_model = 'openai-v3-large'
+        elif 'tabfquad' in ds.name:
+            self.embeddings_model = 'openai-v3-large'
+        elif 'shift' in ds.name:
+            self.embeddings_model = 'bge-m3'
+        elif 'tatdqa' in ds.name:
+            self.embeddings_model = 'gemini-004'
+        elif 'arxivqa' in ds.name:
+            self.embeddings_model = 'openai-v3-large'
+        else:
+            raise ValueError(f"Invalid dataset: {ds.name}")
 
         if self.embeddings_model == 'openai-v3-large':
             dim = 1536 * 2
@@ -285,14 +299,14 @@ class DprRetriever(VisionRetriever):
         if valid_docs:
             texts_to_encode, hashes_to_encode = zip(*valid_docs)
             
-            logger.info(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
+            print(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
             
             encoded_docs = []
             for batch_texts in tqdm(chunked(texts_to_encode, batch_size), total=len(texts_to_encode)//batch_size + 1, desc="Encoding documents"):
                 batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
                 encoded_docs.extend(batch_embeddings)
             
-            logger.info(f"Inserting {len(encoded_docs)} documents to {self.db.keyspace}")
+            print(f"Inserting {len(encoded_docs)} documents to {self.db.keyspace}")
             
             futures = []
             for doc_text, doc_hash, doc_embedding in zip(texts_to_encode, hashes_to_encode, encoded_docs):
@@ -321,27 +335,46 @@ class DprRetriever(VisionRetriever):
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
 
-        # queries_dict = {idx: query for idx, query in enumerate(self.query_texts)}
-        # tokenized_queries = self.preprocess_text(queries_dict)
-        # corpus = {idx: passage for idx, passage in enumerate(self.doc_texts)}
-        # tokenized_corpus = self.preprocess_text(corpus)
-        # bm25 = BM25Okapi(tokenized_corpus)
-        # bm25_scores = []
-        # for query in tokenized_queries:
-        #     score = bm25.get_scores(query)
-        #     bm25_scores.append(score)
-        # return torch.tensor(np.array(bm25_scores))  # (num_queries, num_docs)
+        queries_dict = {idx: query for idx, query in enumerate(self.query_texts)}
+        tokenized_queries = self.preprocess_text(queries_dict)
+        corpus = {idx: passage for idx, passage in enumerate(self.doc_texts)}
+        tokenized_corpus = self.preprocess_text(corpus)
+        bm25 = BM25Okapi(tokenized_corpus)
 
-        dpr_scores = []
-        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.db.search(query_emb[0], 100)
-            score_dict = dict(query_scores)
-            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
-            dpr_scores.append(query_scores)
-        return torch.tensor(dpr_scores)
+        final_scores = []
+        for query_idx, (query, query_emb) in enumerate(tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
+            # Get BM25 scores
+            bm25_scores = bm25.get_scores(query)
+            bm25_top_20 = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:20]
 
-        # Default scores with the correct shape
-        # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
+            # Get DPR scores
+            dpr_scores = self.db.search(query_emb[0].tolist(), 20)
+            hash_to_index = {hash: idx for idx, hash in enumerate(list_emb_documents)}
+            dpr_scores_indexed = [(hash_to_index[doc_hash], score) for doc_hash, score in dpr_scores]
+
+            # Combine BM25 and DPR results
+            combined_results = set(doc_index for doc_index, _ in bm25_top_20 + dpr_scores_indexed)
+
+            # Prepare documents for reranking
+            documents_to_rerank = [self.doc_texts[doc_index] for doc_index in combined_results]
+            
+            # Rerank using Cohere's v3 API
+            reranked_results = self.cohere_client.rerank(
+                query=self.query_texts[query_idx],
+                documents=documents_to_rerank,
+                model='rerank-multilingual-v3.0',
+                top_n=5
+            )
+            
+            # Create a dictionary of reranked scores
+            reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
+            for result in reranked_results.results:
+                doc_id = list(combined_results)[int(result.index)]
+                reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
+            
+            final_scores.append([reranked_scores[doc_id] for doc_id in list_emb_documents])
+
+        return torch.tensor(final_scores)
 
     def preprocess_text(self, documents: dict[int, str]) -> list[list[str]]:
         """
@@ -358,8 +391,7 @@ class DprRetriever(VisionRetriever):
         return tokenized_list
 
     def get_save_one_path(self, output_path, dataset_name):
-        fname = f'{self.keyspace_name(dataset_name)}.pth'
-        return os.path.join(output_path, fname)
+        return os.path.join(output_path, ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_bm25_reranked').lower()]) + '.pth')
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')

@@ -47,7 +47,7 @@ def evaluate_dataset(
         queries.remove(None)
         if len(queries) == 0:
             raise ValueError("All queries are None")
-    queries = queries[:len(queries) // 10]
+    # queries = queries[:len(queries) // 10]
     documents = ds[col_documents]
 
     # Get the embeddings for the queries and documents

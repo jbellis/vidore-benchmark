@@ -58,20 +58,24 @@ def main():
         height = bar.get_height()
         ax1.text(bar.get_x() + bar.get_width()/2., height,
                  f'{height:.3f}',
-                 ha='center', va='bottom', fontsize=8, color=COLOR_OPENAI)
+                 ha='center', va='bottom', fontsize=8, color='black')
 
-    # Create a second y-axis for token counts
+    # Plot token counts as bars
     ax2 = ax1.twinx()
-    ax2.plot(x, token_counts, color='red', marker='o', linestyle='-', linewidth=2, markersize=8)
+    token_bars = ax2.bar([i + 0.2 for i in x], token_counts, width=0.4, color='red', alpha=0.5)
     ax2.set_ylabel('Average Token Count', color='red')
     ax2.tick_params(axis='y', labelcolor='red')
 
     # Add token count labels
-    for i, count in enumerate(token_counts):
-        ax2.text(i, count, f'{count:.2f}', ha='center', va='bottom', fontsize=8, color='red')
+    for bar in token_bars:
+        height = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2., height,
+                 f'{height:.2f}',
+                 ha='center', va='bottom', fontsize=8, color='red')
 
     plt.title('NDCG@5 and Average Token Count by Dataset (openai_v3_small)')
-    plt.xticks(x, datasets, rotation=45, ha='right')
+    plt.xticks([i + 0.1 for i in x], datasets, rotation=45, ha='right')
+    plt.gcf().autofmt_xdate()  # This will angle and adjust the x-axis labels
 
     plt.tight_layout()
     plt.savefig('ndcg_token_comparison.png')

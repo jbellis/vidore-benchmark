@@ -155,11 +155,12 @@ class DprSherpaRetriever(VisionRetriever):
         encoded_queries = []
         for query in tqdm(queries, desc="Encoding queries"):
             query_hash = hashlib.sha256(query.encode()).hexdigest()
-            cache_file = os.path.join(self.query_cache_dir, f"{query_hash}.pt")
-            if not os.path.exists(cache_file):
-                raise NotImplementedError('Unable to recompute query embeddings')
-
-            encoded_query = torch.load(cache_file)
+            cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.model_name}.pt")
+            if os.path.exists(cache_file):
+                encoded_query = torch.load(cache_file)
+            else:
+                encoded_query = torch.tensor(get_embeddings(self.model_name, [query], is_query=True)[0]).unsqueeze(0)
+                torch.save(encoded_query, cache_file)
             encoded_queries.append(encoded_query)
         
         logger.info(f"Loaded/Encoded {len(encoded_queries)} queries")
@@ -253,7 +254,7 @@ class DprSherpaRetriever(VisionRetriever):
 
         scores = []
         for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.db.search(query_emb, 100)
+            query_scores = self.db.search(query_emb[0], 100)
             score_dict = dict(query_scores)
             query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
             scores.append(query_scores)

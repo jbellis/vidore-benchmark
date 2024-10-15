@@ -161,11 +161,20 @@ class DprSherpaRetriever(VisionRetriever):
             cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")
             if os.path.exists(cache_file):
                 encoded_query = torch.load(cache_file)
+                encoded_queries.append(encoded_query)
             else:
-                encoded_query = torch.tensor(get_embeddings(self.embeddings_model, [query], is_query=True)[0]).unsqueeze(0)
-                torch.save(encoded_query, cache_file)
-            encoded_queries.append(encoded_query)
-        
+                encoded_queries.append(None)
+
+        if any(qe is None for qe in encoded_queries):
+            missing_queries = [q for q, qe in zip(queries, encoded_queries) if qe is None]
+            fresh_encodings = get_embeddings(self.embeddings_model, missing_queries, is_query=True)
+            for q, qe in zip(missing_queries, fresh_encodings):
+                query_hash = hashlib.sha256(q.encode()).hexdigest()
+                cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")
+                qe2 = torch.tensor(qe).unsqueeze(0)
+                torch.save(qe2, cache_file)
+                encoded_queries[queries.index(q)] = qe2
+
         logger.info(f"Loaded/Encoded {len(encoded_queries)} queries")
         print(len(encoded_queries), 'sample query embedding dimensions', encoded_queries[0].shape)
         return encoded_queries

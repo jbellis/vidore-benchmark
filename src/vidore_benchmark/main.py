@@ -98,7 +98,6 @@ def evaluate_retriever(
             )
         }
 
-        pool_factor = int(os.environ.get('VIDORE_DOC_POOL'))
         savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_name)
         with open(str(savepath), "w", encoding="utf-8") as f:
             json.dump(metrics, f)

@@ -8,6 +8,7 @@ from typing import Optional
 
 import torch
 from PIL import Image
+from google.api_core.exceptions import InternalServerError
 from tqdm import tqdm
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -78,6 +79,9 @@ class DprSherpaRetriever(VisionRetriever):
 
         logger.info(f"Chunking {len(documents)} documents")
 
+        encoding_errors = 0
+        copyright_errors = 0
+        server_errors = 0
         for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="Processing documents"):
             cache_file = os.path.join(self.document_cache_dir, f"{doc_hash}.txt")
             
@@ -87,27 +91,43 @@ class DprSherpaRetriever(VisionRetriever):
                 logger.info(f"Loaded cached text for document {doc_hash}")
             else:
                 # Extract text from the image using Gemini Flash
-                response = self.gemini_model.generate_content(
-                    [
-                        "Extract all the text from this image, preserving structure as much as possible.",
-                        doc_image
-                    ],
-                    generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048,)
-                )
                 try:
-                    extracted_text = response.text
+                    extracted_text = self.extract_text(doc_image)
                 except ValueError as e:
-                    print(e)
+                    if 'encoding error' in str(e):
+                        # Cut the image resolution in half and try again
+                        doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
+                        logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
+                        try:
+                            extracted_text = self.extract_text(doc_image)
+                        except ValueError as e:
+                            encoding_errors += 1
+                    elif 'copyright' in str(e):
+                        copyright_errors += 1
+                        logger.warning(f"Copyright error for document {doc_hash}")
+                    else:
+                        encoding_errors += 1
+                        logger.error(f"Encoding error for document {doc_hash}: {str(e)}")
+                except InternalServerError:
+                    server_errors += 1
+                    logger.error(f"Internal server error for document {doc_hash}")
                 else:
-                    print(extracted_text)
                     with open(cache_file, 'w') as f:
                         json.dump(extracted_text, f, indent=2)
-                    logger.info(f"Extracted and cached text for document {doc_hash}")
-
-            # You can process the extracted text here if needed
-            # print(extracted_text)
+        print(f"{len(documents)} processed with {encoding_errors}/{copyright_errors}/{server_errors} encoding/copyright/server errors")
 
         return document_hashes
+
+    def extract_text(self, doc_image):
+        response = self.gemini_model.generate_content(
+            [
+                "Extract all the text from this image, preserving structure as much as possible.",
+                doc_image
+            ],
+            generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048, )
+        )
+        extracted_text = response.text
+        return extracted_text
 
     def get_scores(
             self,
@@ -121,7 +141,7 @@ class DprSherpaRetriever(VisionRetriever):
         return torch.ones((len(list_emb_queries), len(list_emb_documents)))
 
     def get_save_one_path(self, output_path, dataset_name):
-        fname = f'{self.keyspace_name(dataset_name)}_{self.query_pool_distance}_{self.n_ann_docs}_{self.n_maxsim_candidates}.pth'
+        fname = f'{self.keyspace_name(dataset_name)}_{self.model_name}.pth'
         return os.path.join(output_path, fname)
 
     def get_save_all_path(self, output_path):

@@ -1,26 +1,29 @@
 import hashlib
+import json
 import logging
 import os
-import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from openai import OpenAI, embeddings
+import google.generativeai as genai
+import numpy as np
 import tiktoken
 import torch
 from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
 from google.api_core.exceptions import InternalServerError
+from more_itertools import chunked
+from nltk import word_tokenize
+from nltk.corpus import stopwords
+from openai import OpenAI
+from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
+
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
-from more_itertools import chunked
-
-import google.generativeai as genai
-
 from .colbert_live_retriever import encode_to_bytes
 
 logging.basicConfig(level=logging.INFO)
@@ -177,7 +180,8 @@ class DprRetriever(VisionRetriever):
     def forward_queries(self, queries: list[str], batch_size: int, **kwargs) -> list[torch.Tensor]:
         batch_size = 32
         logger.info(f"Encoding {len(queries)} queries with batch_size={batch_size}")
-        
+
+        self.query_texts = queries
         encoded_queries = []
         for query in tqdm(queries, desc="Loading cached queries"):
             query_hash = hashlib.sha256(query.encode()).hexdigest()
@@ -221,7 +225,7 @@ class DprRetriever(VisionRetriever):
         encoding_errors = 0
         copyright_errors = 0
         server_errors = 0
-        doc_texts = []
+        self.doc_texts = []
         for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="OCR-ing documents"):
             dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
             cache_file = os.path.join(dataset_cache_dir, f"{doc_hash}.txt")
@@ -256,14 +260,14 @@ class DprRetriever(VisionRetriever):
                     with open(cache_file, 'w') as f:
                         json.dump(extracted_text, f, indent=2)
             if 'extracted_text' in locals():
-                doc_texts.append(extracted_text)
+                self.doc_texts.append(extracted_text)
             else:
-                doc_texts.append(None)
+                self.doc_texts.append(None)
         print(f"{len(documents)} OCR'd with {encoding_errors}/{copyright_errors}/{server_errors} encoding/copyright/server errors")
 
         # Batch encoding of documents
         valid_docs = [(doc_text, doc_hash)
-                      for doc_text, doc_hash in zip(doc_texts, document_hashes)
+                      for doc_text, doc_hash in zip(self.doc_texts, document_hashes)
                       if doc_text is not None and not self.db.document_exists(doc_hash)]
         
         if valid_docs:
@@ -306,16 +310,44 @@ class DprRetriever(VisionRetriever):
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
 
+        queries_dict = {idx: query for idx, query in enumerate(self.query_texts)}
+        tokenized_queries = self.preprocess_text(queries_dict)
+
+        corpus = {idx: passage for idx, passage in enumerate(self.doc_texts)}
+        tokenized_corpus = self.preprocess_text(corpus)
+        bm25 = BM25Okapi(tokenized_corpus)
+
         scores = []
-        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-            query_scores = self.db.search(query_emb[0], 100)
-            score_dict = dict(query_scores)
-            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
-            scores.append(query_scores)
-        return torch.tensor(scores)
+        for query in tokenized_queries:
+            score = bm25.get_scores(query)
+            scores.append(score)
+
+        return torch.tensor(np.array(scores))  # (num_queries, num_docs)
+
+        # scores = []
+        # for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+        #     query_scores = self.db.search(query_emb[0], 100)
+        #     score_dict = dict(query_scores)
+        #     query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+        #     scores.append(query_scores)
+        # return torch.tensor(scores)
 
         # Default scores with the correct shape
         # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
+
+    def preprocess_text(self, documents: dict[int, str]) -> list[list[str]]:
+        """
+        Basic preprocessing of the text data:
+        - remove stopwords
+        - punctuation
+        - lowercase all the words.
+        """
+        stop_words = set(stopwords.words("english"))
+        tokenized_list = [
+            [word.lower() for word in word_tokenize(sentence) if word.isalnum() and word.lower() not in stop_words]
+            for sentence in documents.values()
+        ]
+        return tokenized_list
 
     def get_save_one_path(self, output_path, dataset_name):
         fname = f'{self.keyspace_name(dataset_name)}.pth'

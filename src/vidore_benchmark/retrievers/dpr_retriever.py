@@ -10,6 +10,7 @@ import numpy as np
 import tiktoken
 import torch
 from PIL import Image
+from FlagEmbedding import BGEM3FlagModel
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
 from google.api_core.exceptions import InternalServerError
@@ -88,6 +89,8 @@ class DprDB:
 
 
 STELLA_MODEL = None
+BGE_M3_MODEL = None
+
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
         if 'small' in provider:
@@ -124,6 +127,13 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
             return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
         else:
             return STELLA_MODEL.encode(texts).tolist()
+    elif provider.startswith('bge-m3'):
+        global BGE_M3_MODEL
+        if BGE_M3_MODEL is None:
+            BGE_M3_MODEL = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
+        with torch.no_grad():
+            output = BGE_M3_MODEL.encode(texts, max_length=512)["dense_vecs"]
+        return output.tolist()
     else:
         raise ValueError(f"Invalid embedding provider: {provider}")
 
@@ -144,7 +154,7 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.document_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3']
         if self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
@@ -165,6 +175,8 @@ class DprRetriever(VisionRetriever):
         elif self.embeddings_model == 'gemini-004':
             dim = 768
         elif self.embeddings_model == 'stella':
+            dim = 1024
+        elif self.embeddings_model == 'bge-m3':
             dim = 1024
         else:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")

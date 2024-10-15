@@ -9,6 +9,7 @@ COLOR_PALETTE = {
     'gemini_004': '#ff7f0e',  # orange
     'openai_v3_small': '#65ff3d',  # light green (50% more saturated)
     'openai_v3_large': '#2ca02c',  # green
+    'bge_m3': '#9467bd',  # purple
     'colbert_fast': '#ff4d4a',  # light red (50% more saturated)
     'colbert_best': '#d62728',  # red
 }
@@ -19,7 +20,8 @@ def extract_dataset_and_model(filename):
         'stella': 'stella',
         'gemini_004': 'gemini_004',
         'openai_v3_small': 'openai_v3_small',
-        'openai_v3_large': 'openai_v3_large'
+        'openai_v3_large': 'openai_v3_large',
+        'bge_m3': 'bge_m3'
     }
     
     for model in models:
@@ -60,7 +62,7 @@ def find_best_colbert_live_ndcg(dataset, fast=False):
 
 def main():
     output_dir = 'outputs'
-    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'colbert_fast', 'colbert_best']
+    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'bge_m3', 'colbert_fast', 'colbert_best']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -86,7 +88,7 @@ def main():
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.15  # Reduced width to accommodate 5 bars
+    width = 0.1125  # Adjusted width (0.15 * 0.75)
 
     fig, ax = plt.subplots(figsize=(24, 12))
 

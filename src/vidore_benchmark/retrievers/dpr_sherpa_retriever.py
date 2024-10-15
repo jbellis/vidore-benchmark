@@ -231,38 +231,30 @@ class DprSherpaRetriever(VisionRetriever):
                     extracted_text = json.load(f)
                 logger.info(f"Loaded cached text for document {doc_hash}")
             else:
-                old_cache_file = os.path.join(self.document_cache_dir, f"{doc_hash}.txt")
-                if os.path.exists(old_cache_file):
-                    # Move the file to the new location
-                    os.rename(old_cache_file, cache_file)
-                    with open(cache_file, 'r') as f:
-                        extracted_text = json.load(f)
-                    logger.info(f"Moved and loaded cached text for document {doc_hash}")
-                else:
-                    # Extract text from the image using Gemini Flash
-                    try:
-                        extracted_text = self.extract_text(doc_image)
-                    except ValueError as e:
-                        if 'encoding error' in str(e):
-                            # Cut the image resolution in half and try again
-                            doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
-                            logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
-                            try:
-                                extracted_text = self.extract_text(doc_image)
-                            except ValueError as e:
-                                encoding_errors += 1
-                        elif 'copyright' in str(e):
-                            copyright_errors += 1
-                            logger.warning(f"Copyright error for document {doc_hash}")
-                        else:
+                # Extract text from the image using Gemini Flash
+                try:
+                    extracted_text = self.extract_text(doc_image)
+                except ValueError as e:
+                    if 'encoding error' in str(e):
+                        # Cut the image resolution in half and try again
+                        doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
+                        logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
+                        try:
+                            extracted_text = self.extract_text(doc_image)
+                        except ValueError as e:
                             encoding_errors += 1
-                            logger.error(f"Encoding error for document {doc_hash}: {str(e)}")
-                    except InternalServerError:
-                        server_errors += 1
-                        logger.error(f"Internal server error for document {doc_hash}")
+                    elif 'copyright' in str(e):
+                        copyright_errors += 1
+                        logger.warning(f"Copyright error for document {doc_hash}")
                     else:
-                        with open(cache_file, 'w') as f:
-                            json.dump(extracted_text, f, indent=2)
+                        encoding_errors += 1
+                        logger.error(f"Encoding error for document {doc_hash}: {str(e)}")
+                except InternalServerError:
+                    server_errors += 1
+                    logger.error(f"Internal server error for document {doc_hash}")
+                else:
+                    with open(cache_file, 'w') as f:
+                        json.dump(extracted_text, f, indent=2)
             if 'extracted_text' in locals():
                 doc_texts.append(extracted_text)
             else:
@@ -314,16 +306,16 @@ class DprSherpaRetriever(VisionRetriever):
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
 
-        # scores = []
-        # for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-        #     query_scores = self.db.search(query_emb[0], 100)
-        #     score_dict = dict(query_scores)
-        #     query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
-        #     scores.append(query_scores)
-        # return torch.tensor(scores)
+        scores = []
+        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+            query_scores = self.db.search(query_emb[0], 100)
+            score_dict = dict(query_scores)
+            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+            scores.append(query_scores)
+        return torch.tensor(scores)
 
         # Default scores with the correct shape
-        return torch.ones((len(list_emb_queries), len(list_emb_documents)))
+        # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
 
     def get_save_one_path(self, output_path, dataset_name):
         fname = f'{self.keyspace_name(dataset_name)}.pth'

@@ -17,7 +17,7 @@ TOKEN_COUNTS = {
 
 def extract_dataset(filename):
     parts = filename.split('_')
-    return '_'.join(parts[1:-2])  # Assuming the format is 'vidore_dataset_openai_v3_small.pth'
+    return '_'.join(parts[1:-3])  # Assuming the format is 'vidore_dataset_openai_v3_small.pth'
 
 def read_ndcg_value(file_path):
     with open(file_path, 'r') as f:
@@ -37,9 +37,13 @@ def main():
             data[dataset] = ndcg_value
 
     # Prepare data for plotting
-    datasets = list(data.keys())
+    datasets = [dataset for dataset in data.keys() if dataset in TOKEN_COUNTS]
     ndcg_values = [data[dataset] for dataset in datasets]
     token_counts = [TOKEN_COUNTS[dataset] for dataset in datasets]
+
+    if not datasets:
+        print("No matching datasets found. Please check your data and TOKEN_COUNTS dictionary.")
+        return
 
     fig, ax1 = plt.subplots(figsize=(12, 6))
 

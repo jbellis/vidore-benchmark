@@ -1,5 +1,6 @@
 import os
 import json
+import glob
 import matplotlib.pyplot as plt
 
 def extract_dataset_and_model(filename):
@@ -23,9 +24,18 @@ def read_ndcg_value(file_path):
     key = list(data.keys())[0]
     return data[key]['ndcg_at_5']
 
+def find_best_colbert_live_ndcg(dataset):
+    pattern = f'outputs-colbert-live/vidore_{dataset}*.pth'
+    files = glob.glob(pattern)
+    best_ndcg = 0
+    for file in files:
+        ndcg = read_ndcg_value(file)
+        best_ndcg = max(best_ndcg, ndcg)
+    return best_ndcg
+
 def main():
     output_dir = 'outputs'
-    models = ['stella', 'gemini_004', 'openai_v3_small']
+    models = ['stella', 'gemini_004', 'openai_v3_small', 'colbert_best']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -41,10 +51,15 @@ def main():
             else:
                 print(f"Warning: Unable to extract dataset and model from file '{filename}'. Skipping this file.")
 
+    # Add colbert_best data
+    for dataset in data.keys():
+        best_colbert_ndcg = find_best_colbert_live_ndcg(dataset)
+        data[dataset]['colbert_best'] = best_colbert_ndcg
+
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.25
+    width = 0.2  # Reduced width to accommodate 4 bars
 
     fig, ax = plt.subplots(figsize=(24, 12))
 
@@ -54,7 +69,7 @@ def main():
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Model')
-    ax.set_xticks([xi + width for xi in x])
+    ax.set_xticks([xi + 1.5 * width for xi in x])
     ax.set_xticklabels(datasets, rotation=45, ha='right')
     ax.legend()
 

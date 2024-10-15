@@ -87,7 +87,11 @@ class DprDB:
 STELLA_MODEL = None
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
-        tiktoken_model = tiktoken.encoding_for_model('text-embedding-3-small')
+        if 'small' in provider:
+            model_name = 'text-embedding-3-small'
+        else:
+            model_name = 'text-embedding-3-large'
+        tiktoken_model = tiktoken.encoding_for_model(model_name)
         def tokenize(text: str) -> list[int]:
             return tiktoken_model.encode(text, disallowed_special=())
         def token_length(text: str) -> int:
@@ -103,10 +107,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
                 truncated_passages += 1
                 text = truncate_to(text, 8000)
             truncated_texts.append(text)
-        response = openai_client.embeddings.create(
-            input=truncated_texts,
-            model="text-embedding-3-small"
-        )
+        response = openai_client.embeddings.create(input=truncated_texts, model=model_name)
         return [data.embedding for data in response.data]
     elif provider.startswith('gemini'):
         model = "models/text-embedding-004"
@@ -139,7 +140,7 @@ class DprSherpaRetriever(VisionRetriever):
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
-        valid_models = ['openai-v3-small', 'gemini-004', 'stella']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella']
         if self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
@@ -149,7 +150,9 @@ class DprSherpaRetriever(VisionRetriever):
         if 'synthetic' in ds.name:
             raise StopIteration('Reached synthetic datsets; stopping')
 
-        if self.embeddings_model == 'openai-v3-small':
+        if self.embeddings_model == 'openai-v3-large':
+            dim = 1536 * 2
+        elif self.embeddings_model == 'openai-v3-small':
             dim = 1536
         elif self.embeddings_model == 'gemini-004':
             dim = 768

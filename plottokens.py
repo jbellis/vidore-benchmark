@@ -74,8 +74,7 @@ def main():
                  ha='center', va='bottom', fontsize=8, color='red')
 
     plt.title('NDCG@5 and Average Token Count by Dataset (openai_v3_small)')
-    plt.xticks([i + 0.1 for i in x], datasets, rotation=45, ha='right')
-    plt.gcf().autofmt_xdate()  # This will angle and adjust the x-axis labels
+    plt.xticks([i + 0.1 for i in x], [d.split('_test')[0] for d in datasets], ha='center')
 
     plt.tight_layout()
     plt.savefig('ndcg_token_comparison.png')

@@ -3,12 +3,23 @@ import json
 import glob
 import matplotlib.pyplot as plt
 
+# Define a color palette
+COLOR_PALETTE = {
+    'stella': '#1f77b4',  # blue
+    'gemini_004': '#ff7f0e',  # orange
+    'openai_v3_small': '#98df8a',  # light green
+    'openai_v3_large': '#2ca02c',  # green
+    'colbert_fast': '#ff9896',  # light red
+    'colbert_best': '#d62728',  # red
+}
+
 def extract_dataset_and_model(filename):
     parts = filename.split('_')
     models = {
         'stella': 'stella',
         'gemini_004': 'gemini_004',
-        'openai_v3_small': 'openai_v3_small'
+        'openai_v3_small': 'openai_v3_small',
+        'openai_v3_large': 'openai_v3_large'
     }
     
     for model in models:
@@ -49,7 +60,7 @@ def find_best_colbert_live_ndcg(dataset, fast=False):
 
 def main():
     output_dir = 'outputs'
-    models = ['stella', 'gemini_004', 'openai_v3_small', 'colbert_best', 'colbert_fast']
+    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'colbert_fast', 'colbert_best']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -81,7 +92,7 @@ def main():
 
     for i, model in enumerate(models):
         values = [data[dataset].get(model, 0) for dataset in datasets]
-        bars = ax.bar([xi + i * width for xi in x], values, width, label=model)
+        bars = ax.bar([xi + i * width for xi in x], values, width, label=model, color=COLOR_PALETTE[model])
         
         # Add text labels on top of each bar
         for bar in bars:
@@ -92,14 +103,14 @@ def main():
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Model')
-    ax.set_xticks([xi + 2 * width for xi in x])
+    ax.set_xticks([xi + 2.5 * width for xi in x])  # Adjusted to center x-axis labels
     ax.set_xticklabels(datasets, rotation=45, ha='right')
     ax.legend()
 
     plt.tight_layout()
-    plt.show()
     plt.savefig('ndcg_comparison.png')
-    print("Graph displayed and saved as ndcg_comparison.png")
+    plt.show()
+    print("Graph saved as ndcg_comparison.png and displayed")
 
 if __name__ == "__main__":
     main()

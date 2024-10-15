@@ -310,27 +310,24 @@ class DprRetriever(VisionRetriever):
     ) -> torch.Tensor:
         logger.info(f"Computing scores for {len(list_emb_queries)} queries and {len(list_emb_documents)} documents")
 
-        queries_dict = {idx: query for idx, query in enumerate(self.query_texts)}
-        tokenized_queries = self.preprocess_text(queries_dict)
+        # queries_dict = {idx: query for idx, query in enumerate(self.query_texts)}
+        # tokenized_queries = self.preprocess_text(queries_dict)
+        # corpus = {idx: passage for idx, passage in enumerate(self.doc_texts)}
+        # tokenized_corpus = self.preprocess_text(corpus)
+        # bm25 = BM25Okapi(tokenized_corpus)
+        # bm25_scores = []
+        # for query in tokenized_queries:
+        #     score = bm25.get_scores(query)
+        #     bm25_scores.append(score)
+        # return torch.tensor(np.array(bm25_scores))  # (num_queries, num_docs)
 
-        corpus = {idx: passage for idx, passage in enumerate(self.doc_texts)}
-        tokenized_corpus = self.preprocess_text(corpus)
-        bm25 = BM25Okapi(tokenized_corpus)
-
-        scores = []
-        for query in tokenized_queries:
-            score = bm25.get_scores(query)
-            scores.append(score)
-
-        return torch.tensor(np.array(scores))  # (num_queries, num_docs)
-
-        # scores = []
-        # for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
-        #     query_scores = self.db.search(query_emb[0], 100)
-        #     score_dict = dict(query_scores)
-        #     query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
-        #     scores.append(query_scores)
-        # return torch.tensor(scores)
+        dpr_scores = []
+        for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+            query_scores = self.db.search(query_emb[0], 100)
+            score_dict = dict(query_scores)
+            query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+            dpr_scores.append(query_scores)
+        return torch.tensor(dpr_scores)
 
         # Default scores with the correct shape
         # return torch.ones((len(list_emb_queries), len(list_emb_documents)))

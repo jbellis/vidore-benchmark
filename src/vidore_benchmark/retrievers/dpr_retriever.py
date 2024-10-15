@@ -125,8 +125,8 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         raise ValueError(f"Invalid embedding provider: {provider}")
 
 
-@register_vision_retriever("dpr_sherpa")
-class DprSherpaRetriever(VisionRetriever):
+@register_vision_retriever("dpr")
+class DprRetriever(VisionRetriever):
     """
     DprSherpaRetriever class to retrieve embeddings using a DPR embeddings model with llm_sherpa
     chunking the images.

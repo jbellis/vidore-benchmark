@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 COLOR_PALETTE = {
     'stella': '#1f77b4',  # blue
     'gemini_004': '#ff7f0e',  # orange
-    'openai_v3_small': '#98df8a',  # light green
+    'openai_v3_small': '#65ff3d',  # light green (50% more saturated)
     'openai_v3_large': '#2ca02c',  # green
-    'colbert_fast': '#ff9896',  # light red
+    'colbert_fast': '#ff4d4a',  # light red (50% more saturated)
     'colbert_best': '#d62728',  # red
 }
 

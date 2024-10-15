@@ -309,7 +309,7 @@ class DprSherpaRetriever(VisionRetriever):
         # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
 
     def get_save_one_path(self, output_path, dataset_name):
-        fname = f'{self.keyspace_name(dataset_name)}_{self.embeddings_model}.pth'
+        fname = f'{self.keyspace_name(dataset_name)}.pth'
         return os.path.join(output_path, fname)
 
     def get_save_all_path(self, output_path):

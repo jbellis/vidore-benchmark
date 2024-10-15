@@ -46,7 +46,7 @@ def main():
     x = range(len(datasets))
     width = 0.25
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(24, 12))
 
     for i, model in enumerate(models):
         values = [data[dataset].get(model, 0) for dataset in datasets]
@@ -59,8 +59,9 @@ def main():
     ax.legend()
 
     plt.tight_layout()
+    plt.show()
     plt.savefig('ndcg_comparison.png')
-    print("Graph saved as ndcg_comparison.png")
+    print("Graph displayed and saved as ndcg_comparison.png")
 
 if __name__ == "__main__":
     main()

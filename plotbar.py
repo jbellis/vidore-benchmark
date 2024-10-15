@@ -81,7 +81,14 @@ def main():
 
     for i, model in enumerate(models):
         values = [data[dataset].get(model, 0) for dataset in datasets]
-        ax.bar([xi + i * width for xi in x], values, width, label=model)
+        bars = ax.bar([xi + i * width for xi in x], values, width, label=model)
+        
+        # Add text labels on top of each bar
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.3f}',
+                    ha='center', va='bottom', fontsize=8)
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Model')

@@ -177,7 +177,12 @@ class DprSherpaRetriever(VisionRetriever):
 
         if any(qe is None for qe in encoded_queries):
             missing_queries = [q for q, qe in zip(queries, encoded_queries) if qe is None]
-            fresh_encodings = get_embeddings(self.embeddings_model, missing_queries, is_query=True)
+            fresh_encodings = []
+            for i in tqdm(range(0, len(missing_queries), batch_size), desc="Encoding queries"):
+                batch = missing_queries[i:i+batch_size]
+                batch_encodings = get_embeddings(self.embeddings_model, batch, is_query=True)
+                fresh_encodings.extend(batch_encodings)
+            
             for q, qe in zip(missing_queries, fresh_encodings):
                 query_hash = hashlib.sha256(q.encode()).hexdigest()
                 cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")

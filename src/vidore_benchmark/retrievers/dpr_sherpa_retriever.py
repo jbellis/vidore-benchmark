@@ -40,6 +40,7 @@ class DprDB:
         return cluster.connect()
 
     def _create_schema(self):
+        print(f'Using keyspace {self.keyspace}')
         self.session.execute(f"""
             CREATE KEYSPACE IF NOT EXISTS {self.keyspace}
             WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
@@ -135,15 +136,17 @@ class DprSherpaRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
-        self.model_name = 'openai-v3-small'
+        self.embeddings_model = 'gemini-004'
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
 
     def use_dataset(self, ds):
+        if ds.name.startswith('synthetic'):
+            raise StopIteration('Reached synthetic datsets; stopping')
         self.db = DprDB(self.keyspace_name(ds.name), 1536)
 
     def keyspace_name(self, dataset_name):
-        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_' + self.model_name).lower()])
+        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_' + self.embeddings_model).lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -155,11 +158,11 @@ class DprSherpaRetriever(VisionRetriever):
         encoded_queries = []
         for query in tqdm(queries, desc="Encoding queries"):
             query_hash = hashlib.sha256(query.encode()).hexdigest()
-            cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.model_name}.pt")
+            cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")
             if os.path.exists(cache_file):
                 encoded_query = torch.load(cache_file)
             else:
-                encoded_query = torch.tensor(get_embeddings(self.model_name, [query], is_query=True)[0]).unsqueeze(0)
+                encoded_query = torch.tensor(get_embeddings(self.embeddings_model, [query], is_query=True)[0]).unsqueeze(0)
                 torch.save(encoded_query, cache_file)
             encoded_queries.append(encoded_query)
         
@@ -225,7 +228,7 @@ class DprSherpaRetriever(VisionRetriever):
         for doc_text, doc_hash in tqdm(zip(doc_texts, document_hashes), total=len(doc_texts), desc=f"Inserting to {self.db.keyspace}"):
             if doc_text is None or self.db.document_exists(doc_hash):
                 continue
-            doc_embeddings = get_embeddings(self.model_name, [doc_text], is_query=False)
+            doc_embeddings = get_embeddings(self.embeddings_model, [doc_text], is_query=False)
             futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embeddings[0])]))
 
         for future in tqdm(futures, desc="Waiting for inserts to complete"):
@@ -264,7 +267,7 @@ class DprSherpaRetriever(VisionRetriever):
         # return torch.ones((len(list_emb_queries), len(list_emb_documents)))
 
     def get_save_one_path(self, output_path, dataset_name):
-        fname = f'{self.keyspace_name(dataset_name)}_{self.model_name}.pth'
+        fname = f'{self.keyspace_name(dataset_name)}_{self.embeddings_model}.pth'
         return os.path.join(output_path, fname)
 
     def get_save_all_path(self, output_path):

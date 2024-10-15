@@ -17,6 +17,7 @@ from tqdm import tqdm
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
+from more_itertools import chunked
 
 import google.generativeai as genai
 
@@ -137,18 +138,21 @@ class DprSherpaRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
-        self.embeddings_model = 'stella'
+        self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
+        valid_models = ['openai-v3-small', 'gemini-004', 'stella']
+        if self.embeddings_model not in valid_models:
+            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
 
     def use_dataset(self, ds):
-        if ds.name.startswith('synthetic'):
+        if 'synthetic' in ds.name:
             raise StopIteration('Reached synthetic datsets; stopping')
 
         if self.embeddings_model == 'openai-v3-small':
             dim = 1536
         elif self.embeddings_model == 'gemini-004':
-            dim = 1024
+            dim = 768
         elif self.embeddings_model == 'stella':
             dim = 1024
         else:
@@ -163,10 +167,11 @@ class DprSherpaRetriever(VisionRetriever):
         return True
 
     def forward_queries(self, queries: list[str], batch_size: int, **kwargs) -> list[torch.Tensor]:
+        batch_size = 32
         logger.info(f"Encoding {len(queries)} queries with batch_size={batch_size}")
         
         encoded_queries = []
-        for query in tqdm(queries, desc="Encoding queries"):
+        for query in tqdm(queries, desc="Loading cached queries"):
             query_hash = hashlib.sha256(query.encode()).hexdigest()
             cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")
             if os.path.exists(cache_file):
@@ -178,8 +183,7 @@ class DprSherpaRetriever(VisionRetriever):
         if any(qe is None for qe in encoded_queries):
             missing_queries = [q for q, qe in zip(queries, encoded_queries) if qe is None]
             fresh_encodings = []
-            for i in tqdm(range(0, len(missing_queries), batch_size), desc="Encoding queries"):
-                batch = missing_queries[i:i+batch_size]
+            for batch in tqdm(chunked(missing_queries, batch_size), total=len(missing_queries)//batch_size + 1, desc="Encoding queries"):
                 batch_encodings = get_embeddings(self.embeddings_model, batch, is_query=True)
                 fresh_encodings.extend(batch_encodings)
             
@@ -195,6 +199,7 @@ class DprSherpaRetriever(VisionRetriever):
         return encoded_queries
 
     def forward_documents(self, documents: list[Image.Image], batch_size: int, **kwargs) -> list[str]:
+        batch_size = 16
         with ThreadPoolExecutor() as executor:
             document_bytes = list(tqdm(executor.map(encode_to_bytes, documents), total=len(documents), desc="Encoding to bytes"))
 
@@ -248,7 +253,9 @@ class DprSherpaRetriever(VisionRetriever):
         print(f"{len(documents)} OCR'd with {encoding_errors}/{copyright_errors}/{server_errors} encoding/copyright/server errors")
 
         # Batch encoding of documents
-        valid_docs = [(doc_text, doc_hash) for doc_text, doc_hash in zip(doc_texts, document_hashes) if doc_text is not None and not self.db.document_exists(doc_hash)]
+        valid_docs = [(doc_text, doc_hash)
+                      for doc_text, doc_hash in zip(doc_texts, document_hashes)
+                      if doc_text is not None and not self.db.document_exists(doc_hash)]
         
         if valid_docs:
             texts_to_encode, hashes_to_encode = zip(*valid_docs)
@@ -256,8 +263,7 @@ class DprSherpaRetriever(VisionRetriever):
             logger.info(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
             
             encoded_docs = []
-            for i in tqdm(range(0, len(texts_to_encode), batch_size), desc="Encoding documents"):
-                batch_texts = texts_to_encode[i:i+batch_size]
+            for batch_texts in tqdm(chunked(texts_to_encode, batch_size), total=len(texts_to_encode)//batch_size + 1, desc="Encoding documents"):
                 batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
                 encoded_docs.extend(batch_embeddings)
             

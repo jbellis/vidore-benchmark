@@ -75,6 +75,11 @@ class DprDB:
         rows = self.session.execute(self.search_stmt, (query_embedding, query_embedding, k))
         return [(row.id, row.similarity) for row in rows]
 
+    def document_exists(self, doc_id: str) -> bool:
+        query = "SELECT 1 FROM documents WHERE id = %s"
+        rows = self.session.execute(query, (doc_id,))
+        return rows.one() is not None
+
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
@@ -216,7 +221,7 @@ class DprSherpaRetriever(VisionRetriever):
         # not very efficient since we're doing both the embedding and the insert one-at-a-time
         futures = []
         for doc_text, doc_hash in tqdm(zip(doc_texts, document_hashes), desc="Embedding and inserting documents"):
-            if doc_text is None:
+            if doc_text is None or self.db.document_exists(doc_hash):
                 continue
             doc_embeddings = get_embeddings(self.model_name, [doc_text], is_query=False)
             futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embeddings)]))

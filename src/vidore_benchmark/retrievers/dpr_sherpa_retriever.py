@@ -232,16 +232,28 @@ class DprSherpaRetriever(VisionRetriever):
                 doc_texts.append(None)
         print(f"{len(documents)} OCR'd with {encoding_errors}/{copyright_errors}/{server_errors} encoding/copyright/server errors")
 
-        # not very efficient since we're doing both the embedding and the insert one-at-a-time
-        futures = []
-        for doc_text, doc_hash in tqdm(zip(doc_texts, document_hashes), total=len(doc_texts), desc=f"Inserting to {self.db.keyspace}"):
-            if doc_text is None or self.db.document_exists(doc_hash):
-                continue
-            doc_embeddings = get_embeddings(self.embeddings_model, [doc_text], is_query=False)
-            futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embeddings[0])]))
-
-        for future in tqdm(futures, desc="Waiting for inserts to complete"):
-            future.result()
+        # Batch encoding of documents
+        valid_docs = [(doc_text, doc_hash) for doc_text, doc_hash in zip(doc_texts, document_hashes) if doc_text is not None and not self.db.document_exists(doc_hash)]
+        
+        if valid_docs:
+            texts_to_encode, hashes_to_encode = zip(*valid_docs)
+            
+            logger.info(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
+            
+            encoded_docs = []
+            for i in range(0, len(texts_to_encode), batch_size):
+                batch_texts = texts_to_encode[i:i+batch_size]
+                batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
+                encoded_docs.extend(batch_embeddings)
+            
+            logger.info(f"Inserting {len(encoded_docs)} documents to {self.db.keyspace}")
+            
+            futures = []
+            for doc_text, doc_hash, doc_embedding in zip(texts_to_encode, hashes_to_encode, encoded_docs):
+                futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embedding)]))
+            
+            for future in tqdm(futures, desc="Waiting for inserts to complete"):
+                future.result()
 
         return document_hashes
 

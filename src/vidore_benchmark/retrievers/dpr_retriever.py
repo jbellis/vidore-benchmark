@@ -22,6 +22,8 @@ from openai import OpenAI
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
+from unstructured_client.models import shared
+import unstructured_client
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -31,8 +33,9 @@ from .colbert_live_retriever import encode_to_bytes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set up OpenAI client
 openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+unstructured_client = unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
+                                                             server_url=os.getenv("UNSTRUCTURED_API_URL"))
 
 class DprDB:
     def __init__(self, keyspace: str, vector_size: int):
@@ -146,15 +149,18 @@ class DprRetriever(VisionRetriever):
     chunking the images.
     """
 
-    def __init__(self, device: str = "auto", gemini_api_key: str = None, cohere_api_key: str = None):
+    def __init__(self, device: str = "auto"):
         super().__init__()
         self.device = get_torch_device(device)
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
         os.makedirs(self.document_cache_dir, exist_ok=True)
+        self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3']
+        if self.embeddings_model not in valid_models:
+            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
         self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
@@ -166,21 +172,6 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = ds.name
         dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
         os.makedirs(dataset_cache_dir, exist_ok=True)
-
-        if 'infovqa' in ds.name:
-            self.embeddings_model = 'stella'
-        elif 'docvqa' in ds.name:
-            self.embeddings_model = 'openai-v3-large'
-        elif 'tabfquad' in ds.name:
-            self.embeddings_model = 'openai-v3-large'
-        elif 'shift' in ds.name:
-            self.embeddings_model = 'bge-m3'
-        elif 'tatdqa' in ds.name:
-            self.embeddings_model = 'gemini-004'
-        elif 'arxivqa' in ds.name:
-            self.embeddings_model = 'openai-v3-large'
-        else:
-            raise ValueError(f"Invalid dataset: {ds.name}")
 
         if self.embeddings_model == 'openai-v3-large':
             dim = 1536 * 2
@@ -197,7 +188,7 @@ class DprRetriever(VisionRetriever):
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
-        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_' + self.embeddings_model).lower()])
+        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_unstructured_' + self.embeddings_model).lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -262,29 +253,9 @@ class DprRetriever(VisionRetriever):
                 logger.info(f"Loaded cached text for document {doc_hash}")
             else:
                 # Extract text from the image using Gemini Flash
-                try:
-                    extracted_text = self.extract_text_gemini(doc_image)
-                except ValueError as e:
-                    if 'encoding error' in str(e):
-                        # Cut the image resolution in half and try again
-                        doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
-                        logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
-                        try:
-                            extracted_text = self.extract_text_gemini(doc_image)
-                        except ValueError as e:
-                            encoding_errors += 1
-                    elif 'copyright' in str(e):
-                        copyright_errors += 1
-                        logger.warning(f"Copyright error for document {doc_hash}")
-                    else:
-                        encoding_errors += 1
-                        logger.error(f"Encoding error for document {doc_hash}: {str(e)}")
-                except InternalServerError:
-                    server_errors += 1
-                    logger.error(f"Internal server error for document {doc_hash}")
-                else:
-                    with open(cache_file, 'w') as f:
-                        json.dump(extracted_text, f, indent=2)
+                extracted_text = self.ocr_unstructured(doc_image)
+                with open(cache_file, 'w') as f:
+                    json.dump(extracted_text, f, indent=2)
             if 'extracted_text' in locals():
                 self.doc_texts.append(extracted_text)
             else:
@@ -298,9 +269,7 @@ class DprRetriever(VisionRetriever):
         
         if valid_docs:
             texts_to_encode, hashes_to_encode = zip(*valid_docs)
-            
-            print(f"Encoding {len(texts_to_encode)} documents with batch_size={batch_size}")
-            
+
             encoded_docs = []
             for batch_texts in tqdm(chunked(texts_to_encode, batch_size), total=len(texts_to_encode)//batch_size + 1, desc="Encoding documents"):
                 batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
@@ -317,7 +286,7 @@ class DprRetriever(VisionRetriever):
 
         return document_hashes
 
-    def extract_text_gemini(self, doc_image: Image.Image) -> str:
+    def ocr_gemini(self, doc_image: Image.Image) -> str:
         response = self.gemini_model.generate_content(
             [
                 "Extract all the text from this image, preserving structure as much as possible.",
@@ -326,6 +295,26 @@ class DprRetriever(VisionRetriever):
             generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048, )
         )
         return response.text
+
+    def ocr_unstructured(self, doc_image: Image.Image) -> str:
+        filename = "/tmp/image.png"
+        doc_image.save(filename)
+        if 'tabfquad' in self.current_dataset_name or 'shift' in self.current_dataset_name:
+            language = 'fr'
+        else:
+            language = 'eng'
+        req = {
+            "partition_parameters": {
+                "files": {
+                    "content": open(filename, "rb"),
+                    "file_name": filename,
+                },
+                "strategy": shared.Strategy.HI_RES,
+                "languages": [language],
+            }
+        }
+        res = unstructured_client.general.partition(request=req)
+        return '\n\n'.join(e['text'] for e in res.elements)
 
     def get_scores(
             self,
@@ -391,7 +380,9 @@ class DprRetriever(VisionRetriever):
         return tokenized_list
 
     def get_save_one_path(self, output_path, dataset_name):
-        return os.path.join(output_path, ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_bm25_reranked').lower()]) + '.pth')
+        fname = f'{self.keyspace_name(dataset_name)}.pth'
+        return os.path.join(output_path, fname)
+        # return os.path.join(output_path, ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_bm25_reranked').lower()]) + '.pth')
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')

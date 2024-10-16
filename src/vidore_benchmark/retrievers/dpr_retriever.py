@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -10,11 +9,11 @@ import google.generativeai as genai
 import numpy as np
 import tiktoken
 import torch
-from PIL import Image
+import unstructured_client
 from FlagEmbedding import BGEM3FlagModel
+from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
-from google.api_core.exceptions import InternalServerError
 from more_itertools import chunked
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -23,7 +22,6 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from unstructured_client.models import shared
-import unstructured_client
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -154,8 +152,6 @@ class DprRetriever(VisionRetriever):
         self.device = get_torch_device(device)
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
         os.makedirs(self.query_cache_dir, exist_ok=True)
-        self.document_cache_dir = os.path.join(os.getcwd(), 'document_cache')
-        os.makedirs(self.document_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3']
@@ -163,7 +159,22 @@ class DprRetriever(VisionRetriever):
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None # initialized by use_dataset
-        self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+        self.mode = os.environ.get('VIDORE_SCORE_MODE')
+        valid_modes = ['bm25', 'dpr', 'reranked']
+        if self.mode not in valid_modes:
+            raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
+
+        if self.mode == 'reranked':
+            self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+        else:
+            self.cohere_client = None
+
+        self.ocr_source = os.environ.get('VIDORE_OCR')
+        valid_ocr_sources = ['flash', 'unstructured', 'llamaparse']
+        if self.ocr_source not in valid_ocr_sources:
+            raise ValueError(f"Invalid OCR source: {self.ocr_source}. Valid sources: {valid_ocr_sources}")
+
+        self.document_cache_dir = os.path.join(os.getcwd(), f'document_cache_{self.ocr_source}')
 
     def use_dataset(self, ds):
         if 'synthetic' in ds.name:
@@ -188,7 +199,7 @@ class DprRetriever(VisionRetriever):
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
-        return ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_unstructured_' + self.embeddings_model).lower()])
+        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{self.embeddings_model}').lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -248,14 +259,21 @@ class DprRetriever(VisionRetriever):
             cache_file = os.path.join(dataset_cache_dir, f"{doc_hash}.txt")
             
             if os.path.exists(cache_file):
-                with open(cache_file, 'r') as f:
-                    extracted_text = json.load(f)
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    extracted_text = f.read()
                 logger.info(f"Loaded cached text for document {doc_hash}")
             else:
                 # Extract text from the image using Gemini Flash
-                extracted_text = self.ocr_unstructured(doc_image)
-                with open(cache_file, 'w') as f:
-                    json.dump(extracted_text, f, indent=2)
+                if self.ocr_source == 'flash':
+                    f = self.ocr_gemini
+                elif self.ocr_source == 'unstructured':
+                    f = self.ocr_unstructured
+                else:
+                    assert self.ocr_source == 'llamaparse'
+                    f = self.ocr_llama
+                extracted_text = f(doc_image)
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    f.write(extracted_text)
             if 'extracted_text' in locals():
                 self.doc_texts.append(extracted_text)
             else:
@@ -330,14 +348,13 @@ class DprRetriever(VisionRetriever):
         tokenized_corpus = self.preprocess_text(corpus)
         bm25 = BM25Okapi(tokenized_corpus)
 
-        mode = os.environ.get('VIDORE_SCORE_MODE')
-        if mode == 'bm25':
+        if self.mode == 'bm25':
             scores = []
             for query in tokenized_queries:
                 score = bm25.get_scores(query)
                 scores.append(score)
             return torch.tensor(np.array(scores))  # (num_queries, num_docs)
-        elif mode == 'dpr':
+        elif self.mode == 'dpr':
             scores = []
             for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
                 query_scores = self.db.search(query_emb[0], 100)
@@ -345,9 +362,8 @@ class DprRetriever(VisionRetriever):
                 query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
                 scores.append(query_scores)
             return torch.tensor(scores)
-        elif mode != 'rerank':
-            raise ValueError('Unrecognized scoring mode {mode}')
 
+        assert self.mode == 'reranked'
         final_scores = []
         for query_idx, (query, query_emb) in enumerate(tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
             # Get BM25 scores
@@ -398,9 +414,14 @@ class DprRetriever(VisionRetriever):
         return tokenized_list
 
     def get_save_one_path(self, output_path, dataset_name):
-        fname = f'{self.keyspace_name(dataset_name)}.pth'
-        return os.path.join(output_path, fname)
-        # return os.path.join(output_path, ''.join([c if c.isalnum() else '_' for c in (dataset_name + '_bm25_reranked').lower()]) + '.pth')
+        if self.mode == 'dpr':
+            mode_name = self.embeddings_model
+        elif self.mode == 'bm25':
+            mode_name = 'bm25'
+        else:
+            assert self.mode == 'reranked'
+            mode_name = self.embeddings_model + '_reranked'
+        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()])
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')

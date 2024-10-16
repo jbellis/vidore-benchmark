@@ -350,8 +350,11 @@ class DprRetriever(VisionRetriever):
         doc_image.save(filename)
 
         file_extractor = {".png": llama_parser}
-        doc = SimpleDirectoryReader(input_files=[filename], file_extractor=file_extractor).load_data()[0]
-        return doc.get_content()
+        L = SimpleDirectoryReader(input_files=[filename], file_extractor=file_extractor).load_data()
+        if not L:
+            print(f"No text extracted from {doc_hash}")
+            return None
+        return L[0].get_content()
 
     def ocr_unstructured(self, doc_image: Image.Image, doc_hash: str) -> str:
         global unstructured_client

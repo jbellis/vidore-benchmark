@@ -15,7 +15,10 @@ COLOR_PALETTE = {
     'colbert_best': '#d62728',  # red
     'bm25': '#8c564b',  # brown
     'bm25_reranked': '#e377c2',  # pink
-    'best_dpr': '#7f7f7f',  # gray
+    'best_dpr': '#3366cc',  # blue
+    'bm25': '#ffa500',  # orange-yellow
+    'bm25_reranked': '#2ecc71',  # green
+    'colbert_best': '#e74c3c',  # red
 }
 
 def extract_dataset_and_model(filename):

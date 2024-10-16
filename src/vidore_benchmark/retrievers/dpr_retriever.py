@@ -330,6 +330,24 @@ class DprRetriever(VisionRetriever):
         tokenized_corpus = self.preprocess_text(corpus)
         bm25 = BM25Okapi(tokenized_corpus)
 
+        mode = os.environ.get('VIDORE_SCORE_MODE')
+        if mode == 'bm25':
+            scores = []
+            for query in tokenized_queries:
+                score = bm25.get_scores(query)
+                scores.append(score)
+            return torch.tensor(np.array(scores))  # (num_queries, num_docs)
+        elif mode == 'dpr':
+            scores = []
+            for query_emb in tqdm(list_emb_queries, desc="Computing scores"):
+                query_scores = self.db.search(query_emb[0], 100)
+                score_dict = dict(query_scores)
+                query_scores = [score_dict.get(doc_id, 0.0) for doc_id in list_emb_documents]
+                scores.append(query_scores)
+            return torch.tensor(scores)
+        elif mode != 'rerank':
+            raise ValueError('Unrecognized scoring mode {mode}')
+
         final_scores = []
         for query_idx, (query, query_emb) in enumerate(tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
             # Get BM25 scores

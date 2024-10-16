@@ -45,10 +45,11 @@ def read_ndcg_value(file_path):
     return data[key]['ndcg_at_5']
 
 def find_best_colbert_live_ndcg(dataset, fast=False):
-    pattern = f'outputs-colbert-live/vidore_{dataset}*.pth'
+    pattern = f'outputs-full/vidore_{dataset}*.pth'
     files = glob.glob(pattern)
     best_ndcg = 0
     best_elapsed = float('inf')
+    best_file = None
     for file in files:
         with open(file, 'r') as f:
             data = json.load(f)
@@ -60,11 +61,12 @@ def find_best_colbert_live_ndcg(dataset, fast=False):
             if ndcg > best_ndcg:
                 best_ndcg = ndcg
                 best_elapsed = elapsed
+                best_file = file
         else:
             if ndcg > best_ndcg and elapsed <= 0.2 * best_elapsed:
                 best_ndcg = ndcg
                 best_elapsed = elapsed
-    
+    print(f"Dataset: {dataset}, ColBERT Best File: {best_file}")
     return best_ndcg
 
 def find_best_dpr_model(data, dataset):

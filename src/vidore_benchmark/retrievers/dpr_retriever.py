@@ -15,6 +15,8 @@ from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
 from google.api_core.exceptions import InternalServerError
+from llama_index.core import SimpleDirectoryReader
+from llama_parse import LlamaParse
 from more_itertools import chunked
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -29,12 +31,14 @@ from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-unstructured_client = unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
-                                                             server_url=os.getenv("UNSTRUCTURED_API_URL"))
+
+unstructured_client = None
+llama_parser = None
+
 
 class DprDB:
     def __init__(self, keyspace: str, vector_size: int):
@@ -93,9 +97,14 @@ class DprDB:
 
 STELLA_MODEL = None
 BGE_M3_MODEL = None
+openai_client = None
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
+        global openai_client
+        if not openai_client:
+            openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
         if 'small' in provider:
             model_name = 'text-embedding-3-small'
         else:
@@ -331,8 +340,26 @@ class DprRetriever(VisionRetriever):
         )
         return response.text
 
+    def ocr_llama(self, doc_image: Image.Image, doc_hash: str) -> str:
+        global llama_parser
+        if not llama_parser:
+            llama_parser = LlamaParse(api_key=os.environ.get('LLAMA_CLOUD_API_KEY'),
+                                      result_type="markdown")
+
+        filename = "/tmp/ocr_llama.png"
+        doc_image.save(filename)
+
+        file_extractor = {".png": llama_parser}
+        doc = SimpleDirectoryReader(input_files=[filename], file_extractor=file_extractor).load_data()[0]
+        return doc.get_content()
+
     def ocr_unstructured(self, doc_image: Image.Image, doc_hash: str) -> str:
-        filename = "/tmp/image.png"
+        global unstructured_client
+        if not unstructured_client:
+            unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
+                                                   server_url=os.getenv("UNSTRUCTURED_API_URL"))
+
+        filename = "/tmp/ocr_unstructured.png"
         doc_image.save(filename)
         if 'tabfquad' in self.current_dataset_name or 'shift' in self.current_dataset_name:
             language = 'fr'

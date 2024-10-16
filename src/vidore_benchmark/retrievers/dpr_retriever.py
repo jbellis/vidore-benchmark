@@ -14,6 +14,7 @@ from FlagEmbedding import BGEM3FlagModel
 from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
+from google.api_core.exceptions import InternalServerError
 from more_itertools import chunked
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -250,9 +251,6 @@ class DprRetriever(VisionRetriever):
 
         logger.info(f"Chunking {len(documents)} documents")
 
-        encoding_errors = 0
-        copyright_errors = 0
-        server_errors = 0
         self.doc_texts = []
         for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="OCR-ing documents"):
             dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
@@ -271,14 +269,13 @@ class DprRetriever(VisionRetriever):
                 else:
                     assert self.ocr_source == 'llamaparse'
                     f = self.ocr_llama
-                extracted_text = f(doc_image)
+                extracted_text = f(doc_image, doc_hash)
                 with open(cache_file, 'w', encoding='utf-8') as f:
                     f.write(extracted_text)
             if 'extracted_text' in locals():
                 self.doc_texts.append(extracted_text)
             else:
                 self.doc_texts.append(None)
-        print(f"{len(documents)} OCR'd with {encoding_errors}/{copyright_errors}/{server_errors} encoding/copyright/server errors")
 
         # Batch encoding of documents
         valid_docs = [(doc_text, doc_hash)
@@ -304,7 +301,27 @@ class DprRetriever(VisionRetriever):
 
         return document_hashes
 
-    def ocr_gemini(self, doc_image: Image.Image) -> str:
+    def ocr_gemini(self, doc_image: Image.Image, doc_hash: str) -> str | None:
+        try:
+            return self._ocr_gemini_once(doc_image)
+        except ValueError as e:
+            if 'encoding error' in str(e):
+                # Cut the image resolution in half and try again
+                doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
+                logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
+                try:
+                    return self._ocr_gemini_once(doc_image)
+                except ValueError as e:
+                    print(f"Encoding failed even at reduced resolution: {doc_image.size}")
+            elif 'copyright' in str(e):
+                print(f"Copyright error for document {doc_hash}")
+            else:
+                print(f"Encoding error for document {doc_hash}: {str(e)}")
+        except InternalServerError:
+            print(f"Internal server error for document {doc_hash}")
+        return None
+
+    def _ocr_gemini_once(self, doc_image):
         response = self.gemini_model.generate_content(
             [
                 "Extract all the text from this image, preserving structure as much as possible.",
@@ -314,7 +331,7 @@ class DprRetriever(VisionRetriever):
         )
         return response.text
 
-    def ocr_unstructured(self, doc_image: Image.Image) -> str:
+    def ocr_unstructured(self, doc_image: Image.Image, doc_hash: str) -> str:
         filename = "/tmp/image.png"
         doc_image.save(filename)
         if 'tabfquad' in self.current_dataset_name or 'shift' in self.current_dataset_name:

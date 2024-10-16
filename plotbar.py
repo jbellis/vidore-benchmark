@@ -66,7 +66,8 @@ def find_best_colbert_live_ndcg(dataset, fast=False):
             if ndcg > best_ndcg and elapsed <= 0.2 * best_elapsed:
                 best_ndcg = ndcg
                 best_elapsed = elapsed
-    print(f"Dataset: {dataset}, ColBERT Best File: {best_file}")
+    if best_file:
+        print(f"Dataset: {dataset}, ColBERT Best File: {best_file}")
     return best_ndcg
 
 def find_best_dpr_model(data, dataset):

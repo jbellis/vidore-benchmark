@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -36,7 +37,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-unstructured_client = None
+u_client = None
 llama_parser = None
 
 
@@ -279,12 +280,10 @@ class DprRetriever(VisionRetriever):
                     assert self.ocr_source == 'llamaparse'
                     f = self.ocr_llama
                 extracted_text = f(doc_image, doc_hash)
-                with open(cache_file, 'w', encoding='utf-8') as f:
-                    f.write(extracted_text)
-            if 'extracted_text' in locals():
-                self.doc_texts.append(extracted_text)
-            else:
-                self.doc_texts.append(None)
+                if extracted_text is not None:
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        f.write(extracted_text)
+            self.doc_texts.append(extracted_text)
 
         # Batch encoding of documents
         valid_docs = [(doc_text, doc_hash)
@@ -357,10 +356,10 @@ class DprRetriever(VisionRetriever):
         return L[0].get_content()
 
     def ocr_unstructured(self, doc_image: Image.Image, doc_hash: str) -> str:
-        global unstructured_client
-        if not unstructured_client:
-            unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
-                                                   server_url=os.getenv("UNSTRUCTURED_API_URL"))
+        global u_client
+        if not u_client:
+            u_client = unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
+                                                              server_url=os.getenv("UNSTRUCTURED_API_URL"))
 
         filename = "/tmp/ocr_unstructured.png"
         doc_image.save(filename)
@@ -378,7 +377,7 @@ class DprRetriever(VisionRetriever):
                 "languages": [language],
             }
         }
-        res = unstructured_client.general.partition(request=req)
+        res = u_client.general.partition(request=req)
         return '\n\n'.join(e['text'] for e in res.elements)
 
     def get_scores(
@@ -454,10 +453,9 @@ class DprRetriever(VisionRetriever):
         - lowercase all the words.
         """
         stop_words = set(stopwords.words("english"))
-        tokenized_list = [
-            [word.lower() for word in word_tokenize(sentence) if word.isalnum() and word.lower() not in stop_words]
-            for sentence in documents.values()
-        ]
+        tokenized_list = [[word.lower() for word in word_tokenize(re.sub(r'\|[-\s|]*\|', ' ', sentence))
+                           if word.isalnum() and word.lower() not in stop_words]
+                          for sentence in documents.values()]
         return tokenized_list
 
     def get_save_one_path(self, output_path, dataset_name):

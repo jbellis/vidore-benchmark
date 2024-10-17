@@ -117,6 +117,7 @@ def evaluate_retriever(
             print(f"\n---------------------------\nEvaluating {dataset_item.item_id}")
             savepath = retriever.get_save_one_path(OUTPUT_DIR, dataset_item.item_id)
             if (os.path.exists(savepath)):
+                print(f'Results found at {savepath}')
                 continue
             dataset = cast(Dataset, load_dataset(dataset_item.item_id, split=split))
             dataset.name = dataset_item.item_id

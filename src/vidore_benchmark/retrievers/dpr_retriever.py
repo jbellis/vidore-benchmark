@@ -453,8 +453,8 @@ class DprRetriever(VisionRetriever):
         - lowercase all the words.
         """
         stop_words = set(stopwords.words("english"))
-        tokenized_list = [[word.lower() for word in word_tokenize(re.sub(r'\|[-\s|]*\|', ' ', sentence))
-                           if word.isalnum() and word.lower() not in stop_words]
+        tokenized_list = [[] if sentence is None else [word.lower() for word in word_tokenize(sentence)
+                                                       if word.isalnum() and word.lower() not in stop_words]
                           for sentence in documents.values()]
         return tokenized_list
 
@@ -466,7 +466,8 @@ class DprRetriever(VisionRetriever):
         else:
             assert self.mode == 'reranked'
             mode_name = self.embeddings_model + '_reranked'
-        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()])
+        fname = ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()]) + '.pth'
+        return os.path.join(output_path, fname)
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')

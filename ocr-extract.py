@@ -34,9 +34,22 @@ def read_ndcg_value(file_path):
     key = list(data.keys())[0]
     return data[key]['ndcg_at_5']
 
+def read_existing_results(file_path):
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            return json.load(f)
+    return {}
+
+def write_results(file_path, results):
+    with open(file_path, 'w') as f:
+        json.dump(results, f, indent=2)
+
 def main():
     output_dir = 'outputs'
-    results = {}
+    ocr_json_path = 'ocr.json'
+    
+    # Read existing results
+    results = read_existing_results(ocr_json_path)
 
     for filename in os.listdir(output_dir):
         if filename.startswith('vidore_') and filename.endswith('.pth'):
@@ -51,6 +64,10 @@ def main():
             else:
                 print(f"Warning: Unable to parse dataset, OCR type, and model from file '{filename}'. Skipping this file.")
 
+    # Write updated results back to ocr.json
+    write_results(ocr_json_path, results)
+
+    print("Updated results have been written to ocr.json")
     print(json.dumps(results, indent=2))
 
 if __name__ == "__main__":

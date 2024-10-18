@@ -175,8 +175,15 @@ class DprRetriever(VisionRetriever):
         if self.mode not in valid_modes:
             raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
-        if self.mode == 'reranked':
+        self.reranker = os.environ.get('VIDORE_RERANK')
+        valid_rerankers = ['cohere', 'rrf']
+        if self.reranker not in valid_rerankers:
+            raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
+
+        if self.mode == 'reranked' and self.reranker == 'cohere':
             self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+            else:
+                self.cohere_client = None
         else:
             self.cohere_client = None
 
@@ -427,23 +434,56 @@ class DprRetriever(VisionRetriever):
             # Prepare documents for reranking
             documents_to_rerank = [self.doc_texts[doc_index] for doc_index in combined_results]
             
-            # Rerank using Cohere's v3 API
-            reranked_results = self.cohere_client.rerank(
-                query=self.query_texts[query_idx],
-                documents=documents_to_rerank,
-                model='rerank-multilingual-v3.0',
-                top_n=5
-            )
-            
-            # Create a dictionary of reranked scores
-            reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-            for result in reranked_results.results:
-                doc_id = list(combined_results)[int(result.index)]
-                reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
-            
+            if self.reranker == 'cohere':
+                reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_results, list_emb_documents)
+            else:
+                assert self.reranker == 'rrf'
+                reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents)
+
             final_scores.append([reranked_scores[doc_id] for doc_id in list_emb_documents])
 
         return torch.tensor(final_scores)
+
+    def rerank_cohere(self, query, documents_to_rerank, combined_results, list_emb_documents):
+        reranked_results = self.cohere_client.rerank(
+            query=query,
+            documents=documents_to_rerank,
+            model='rerank-multilingual-v3.0',
+            top_n=5
+        )
+        
+        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
+        for result in reranked_results.results:
+            doc_id = list(combined_results)[int(result.index)]
+            reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
+        
+        return reranked_scores
+
+    def rerank_rrf(self, bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents):
+        k = 60  # A common default value for k in RRF
+
+        # Create dictionaries to store rankings
+        bm25_ranks = {doc_id: rank + 1 for rank, (doc_id, _) in enumerate(bm25_top_20)}
+        dpr_ranks = {doc_id: rank + 1 for rank, (doc_id, _) in enumerate(dpr_scores_indexed)}
+
+        rrf_scores = {}
+        for doc_id in combined_results:
+            bm25_rank = bm25_ranks.get(doc_id, len(combined_results) + 1)
+            dpr_rank = dpr_ranks.get(doc_id, len(combined_results) + 1)
+            rrf_score = 1 / (k + bm25_rank) + 1 / (k + dpr_rank)
+            rrf_scores[doc_id] = rrf_score
+
+        # Normalize RRF scores
+        max_score = max(rrf_scores.values())
+        min_score = min(rrf_scores.values())
+        normalized_scores = {doc_id: (score - min_score) / (max_score - min_score) for doc_id, score in rrf_scores.items()}
+
+        # Create the final reranked_scores dictionary
+        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
+        for doc_id, score in normalized_scores.items():
+            reranked_scores[list_emb_documents[doc_id]] = score
+
+        return reranked_scores
 
     def preprocess_text(self, documents: dict[int, str]) -> list[list[str]]:
         """

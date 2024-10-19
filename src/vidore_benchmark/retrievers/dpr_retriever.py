@@ -37,7 +37,8 @@ This module uses the following environment variables:
 
 VIDORE_SCORE_MODE: The scoring mode to use ('bm25', 'dpr', or 'reranked')
 VIDORE_OCR: The OCR source to use ('flash', 'unstructured', or 'llamaparse')
-VIDORE_DPR_EMBEDDINGS: The embeddings model to use (e.g., 'openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3')
+VIDORE_DPR_EMBEDDINGS: The embeddings model to use ('openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3')
+                       or 'best' for the hardcoded best results for each dataset (useful when doing rerank)
 VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere' or 'rrf')
 
 Optional environment variables:
@@ -181,7 +182,7 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'best']
         if self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
@@ -215,6 +216,22 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = ds.name
         dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
         os.makedirs(dataset_cache_dir, exist_ok=True)
+
+        if self.embeddings_model == 'best':
+            if 'infovqa' in ds.name:
+                self.embeddings_model = 'stella'
+            elif 'docvqa' in ds.name:
+                self.embeddings_model = 'openai-v3-large'
+            elif 'tabfquad' in ds.name:
+                self.embeddings_model = 'openai-v3-large'
+            elif 'shift' in ds.name:
+                self.embeddings_model = 'bge-m3'
+            elif 'tatdqa' in ds.name:
+                self.embeddings_model = 'gemini-004'
+            elif 'arxivqa' in ds.name:
+                self.embeddings_model = 'openai-v3-large'
+            else:
+                raise ValueError(f"Invalid dataset: {ds.name}")
 
         if self.embeddings_model == 'openai-v3-large':
             dim = 1536 * 2
@@ -520,7 +537,7 @@ class DprRetriever(VisionRetriever):
             mode_name = 'bm25'
         else:
             assert self.mode == 'reranked'
-            mode_name = f'{self.embeddings_model}_{self.reranker}'
+            mode_name = f'best_{self.reranker}'
         fname = ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()]) + '.pth'
         return os.path.join(output_path, fname)
 

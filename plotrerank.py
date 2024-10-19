@@ -6,7 +6,25 @@ import matplotlib.pyplot as plt
 COLOR_PALETTE = {
     'cohere': '#1f77b4',  # blue
     'rrf': '#ff7f0e',  # orange
+    'bm25': '#2ca02c',  # green
+    'dpr': '#d62728',   # red
 }
+
+def get_embeddings_model(dataset):
+    if 'infovqa' in dataset:
+        return 'stella'
+    elif 'docvqa' in dataset:
+        return 'openai_v3_large'
+    elif 'tabfquad' in dataset:
+        return 'openai_v3_large'
+    elif 'shift' in dataset:
+        return 'bge_m3'
+    elif 'tatdqa' in dataset:
+        return 'gemini_004'
+    elif 'arxivqa' in dataset:
+        return 'openai_v3_large'
+    else:
+        return None
 
 def extract_dataset_and_rerank_type(filename):
     # 1. Split off cohere / rrf as rerank type
@@ -19,7 +37,6 @@ def extract_dataset_and_rerank_type(filename):
     else:
         return None, None
 
-    print(f"Extracted rerank type: {rerank_type} from filename {filename}")
     # 2. Check if 'best' is in filename
     if 'best' not in parts:
         print(f"Warning: 'best' not found in filename {filename}. Skipping.")
@@ -41,56 +58,96 @@ def extract_dataset_and_rerank_type(filename):
 
     return dataset, rerank_type
 
+def get_bm25_filename(rrf_filename):
+    return rrf_filename.replace('best_rrf', 'bm25')
+
+def get_dpr_filename(rrf_filename, dataset):
+    embeddings_model = get_embeddings_model(dataset)
+    if embeddings_model:
+        return rrf_filename.replace('best_rrf', embeddings_model)
+    return None
+
 def read_ndcg_value(file_path):
     with open(file_path, 'r') as f:
         data = json.load(f)
     key = list(data.keys())[0]
     return data[key]['ndcg_at_5']
 
+
 def main():
     output_dir = 'outputs'
-    rerank_types = ['cohere', 'rrf']
+    score_types = ['cohere', 'rrf', 'bm25', 'dpr']
     data = {}
 
     for filename in os.listdir(output_dir):
         if filename.startswith('vidore_') and filename.endswith('.pth'):
             dataset, rerank_type = extract_dataset_and_rerank_type(filename)
-            if dataset and rerank_type:
-                file_path = os.path.join(output_dir, filename)
-                ndcg_value = read_ndcg_value(file_path)
+            if dataset and rerank_type == 'rrf':  # We use rrf files as a base
+                rrf_file_path = os.path.join(output_dir, filename)
+                if not os.path.exists(rrf_file_path):
+                    print(f"Warning: RRF file not found: {rrf_file_path}")
+                    continue
+                rrf_ndcg = read_ndcg_value(rrf_file_path)
+
+                cohere_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_cohere.pth'))
+                bm25_file_path = os.path.join(output_dir, get_bm25_filename(filename))
+                dpr_filename = get_dpr_filename(filename, dataset)
+                dpr_file_path = os.path.join(output_dir, dpr_filename) if dpr_filename else None
 
                 if dataset not in data:
                     data[dataset] = {}
-                data[dataset][rerank_type] = ndcg_value
+
+                data[dataset]['rrf'] = rrf_ndcg
+
+                if os.path.exists(cohere_file_path):
+                    data[dataset]['cohere'] = read_ndcg_value(cohere_file_path)
+                else:
+                    print(f"Warning: Cohere file not found: {cohere_file_path}")
+                    data[dataset]['cohere'] = 0
+
+                if os.path.exists(bm25_file_path):
+                    data[dataset]['bm25'] = read_ndcg_value(bm25_file_path)
+                else:
+                    print(f"Warning: BM25 file not found: {bm25_file_path}")
+                    data[dataset]['bm25'] = 0
+
+                if dpr_file_path and os.path.exists(dpr_file_path):
+                    data[dataset]['dpr'] = read_ndcg_value(dpr_file_path)
+                else:
+                    if dpr_file_path:
+                        print(f"Warning: DPR file not found: {dpr_file_path}")
+                    else:
+                        print(f"Warning: DPR filename could not be determined for dataset: {dataset}")
+                    data[dataset]['dpr'] = 0
 
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.35  # Width of each bar
+    width = 0.2  # Width of each bar
 
-    fig, ax = plt.subplots(figsize=(16, 8))
+    fig, ax = plt.subplots(figsize=(20, 10))
 
-    for i, rerank_type in enumerate(rerank_types):
-        values = [data[dataset].get(rerank_type, 0) for dataset in datasets]
-        bars = ax.bar([xi + i * width for xi in x], values, width, label=rerank_type, color=COLOR_PALETTE[rerank_type])
+    for i, score_type in enumerate(score_types):
+        values = [data[dataset].get(score_type, 0) for dataset in datasets]
+        bars = ax.bar([xi + i * width for xi in x], values, width, label=score_type, color=COLOR_PALETTE[score_type])
 
         # Add text labels on top of each bar
         for bar in bars:
             height = bar.get_height()
             ax.text(bar.get_x() + bar.get_width()/2., height,
                     f'{height:.3f}',
-                    ha='center', va='bottom', fontsize=8)
+                    ha='center', va='bottom', fontsize=8, rotation=90)
 
     ax.set_ylabel('NDCG@5')
-    ax.set_title('NDCG@5 by Dataset and Rerank Type')
-    ax.set_xticks([xi + width / 2 for xi in x])
+    ax.set_title('NDCG@5 by Dataset and Score Type')
+    ax.set_xticks([xi + 1.5 * width for xi in x])
     ax.set_xticklabels(datasets, rotation=45, ha='right')
     ax.legend()
 
     plt.tight_layout()
-    plt.savefig('rerank_comparison.png')
+    plt.savefig('score_comparison.png', dpi=300, bbox_inches='tight')
     plt.show()
-    print("Graph saved as rerank_comparison.png and displayed")
+    print("Graph saved as score_comparison.png and displayed")
 
 if __name__ == "__main__":
     main()

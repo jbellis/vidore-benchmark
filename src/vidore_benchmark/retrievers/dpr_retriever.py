@@ -492,7 +492,7 @@ class DprRetriever(VisionRetriever):
         return reranked_scores
 
     def rerank_rrf(self, bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents):
-        k = 60  # A common default value for k in RRF
+        k = 20  # A common default value for k in RRF
 
         # Create dictionaries to store rankings
         bm25_ranks = {doc_id: rank + 1 for rank, (doc_id, _) in enumerate(bm25_top_20)}

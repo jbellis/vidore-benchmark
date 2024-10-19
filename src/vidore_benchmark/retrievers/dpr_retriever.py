@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -31,6 +30,23 @@ from vidore_benchmark.retrievers.utils.register_retriever import register_vision
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
+
+
+"""
+This module uses the following environment variables:
+
+VIDORE_SCORE_MODE: The scoring mode to use ('bm25', 'dpr', or 'reranked')
+VIDORE_OCR: The OCR source to use ('flash', 'unstructured', or 'llamaparse')
+VIDORE_DPR_EMBEDDINGS: The embeddings model to use (e.g., 'openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3')
+VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere' or 'rrf')
+
+Optional environment variables:
+OPENAI_API_KEY: API key for OpenAI (if using OpenAI embeddings)
+COHERE_API_KEY: API key for Cohere (if using Cohere reranker)
+LLAMA_CLOUD_API_KEY: API key for LlamaParse (if using LlamaParse OCR)
+UNSTRUCTURED_API_KEY: API key for Unstructured (if using Unstructured OCR)
+UNSTRUCTURED_API_URL: API URL for Unstructured (if using Unstructured OCR)
+"""
 
 
 logging.basicConfig(level=logging.INFO)
@@ -182,8 +198,6 @@ class DprRetriever(VisionRetriever):
 
         if self.mode == 'reranked' and self.reranker == 'cohere':
             self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
-            else:
-                self.cohere_client = None
         else:
             self.cohere_client = None
 
@@ -217,7 +231,8 @@ class DprRetriever(VisionRetriever):
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
-        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{self.embeddings_model}').lower()])
+        ocr_fragment = '' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
+        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}{ocr_fragment}_{self.embeddings_model}').lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -505,7 +520,7 @@ class DprRetriever(VisionRetriever):
             mode_name = 'bm25'
         else:
             assert self.mode == 'reranked'
-            mode_name = self.embeddings_model + '_reranked'
+            mode_name = f'{self.embeddings_model}_{self.reranker}'
         fname = ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()]) + '.pth'
         return os.path.join(output_path, fname)
 

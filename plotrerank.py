@@ -4,10 +4,11 @@ import matplotlib.pyplot as plt
 
 # Define a color palette
 COLOR_PALETTE = {
-    'cohere': '#1f77b4',  # blue
-    'rrf': '#ff7f0e',  # orange
     'bm25': '#2ca02c',  # green
     'dpr': '#d62728',   # red
+    'rrf': '#ff7f0e',  # orange
+    'jina': '#9467bd',  # purple
+    'cohere': '#1f77b4',  # blue
 }
 
 def get_embeddings_model(dataset):
@@ -27,13 +28,16 @@ def get_embeddings_model(dataset):
         return None
 
 def extract_dataset_and_rerank_type(filename):
-    # 1. Split off cohere / rrf as rerank type
+    # 1. Split off cohere / rrf / jina as rerank type
     if filename.endswith('_cohere.pth'):
         rerank_type = 'cohere'
         parts = filename[:-11].split('_')  # Remove '_cohere.pth'
     elif filename.endswith('_rrf.pth'):
         rerank_type = 'rrf'
         parts = filename[:-8].split('_')  # Remove '_rrf.pth'
+    elif filename.endswith('_jina.pth'):
+        rerank_type = 'jina'
+        parts = filename[:-9].split('_')  # Remove '_jina.pth'
     else:
         return None, None
 
@@ -76,7 +80,7 @@ def read_ndcg_value(file_path):
 
 def main():
     output_dir = 'outputs'
-    score_types = ['cohere', 'rrf', 'bm25', 'dpr']
+    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -90,6 +94,7 @@ def main():
                 rrf_ndcg = read_ndcg_value(rrf_file_path)
 
                 cohere_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_cohere.pth'))
+                jina_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_jina.pth'))
                 bm25_file_path = os.path.join(output_dir, get_bm25_filename(filename))
                 dpr_filename = get_dpr_filename(filename, dataset)
                 dpr_file_path = os.path.join(output_dir, dpr_filename) if dpr_filename else None
@@ -104,6 +109,12 @@ def main():
                 else:
                     print(f"Warning: Cohere file not found: {cohere_file_path}")
                     data[dataset]['cohere'] = 0
+
+                if os.path.exists(jina_file_path):
+                    data[dataset]['jina'] = read_ndcg_value(jina_file_path)
+                else:
+                    print(f"Warning: Jina file not found: {jina_file_path}")
+                    data[dataset]['jina'] = 0
 
                 if os.path.exists(bm25_file_path):
                     data[dataset]['bm25'] = read_ndcg_value(bm25_file_path)
@@ -123,7 +134,7 @@ def main():
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.2  # Width of each bar
+    width = 0.15  # Width of each bar (75% of 0.2)
 
     fig, ax = plt.subplots(figsize=(20, 10))
 
@@ -140,7 +151,7 @@ def main():
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Score Type')
-    ax.set_xticks([xi + 1.5 * width for xi in x])
+    ax.set_xticks([xi + 2 * width for xi in x])
     ax.set_xticklabels(datasets, rotation=45, ha='right')
     ax.legend()
 

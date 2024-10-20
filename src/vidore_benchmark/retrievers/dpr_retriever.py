@@ -25,6 +25,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from unstructured_client.models import shared
+from transformers import AutoModelForSequenceClassification
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -193,7 +194,7 @@ class DprRetriever(VisionRetriever):
             raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf']
+        valid_rerankers = ['cohere', 'rrf', 'jina']
         if self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
@@ -201,6 +202,17 @@ class DprRetriever(VisionRetriever):
             self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
         else:
             self.cohere_client = None
+
+        if self.mode == 'reranked' and self.reranker == 'jina':
+            self.jina_model = AutoModelForSequenceClassification.from_pretrained(
+                'jinaai/jina-reranker-v2-base-multilingual',
+                torch_dtype="auto",
+                trust_remote_code=True,
+            )
+            self.jina_model.to(self.device)
+            self.jina_model.eval()
+        else:
+            self.jina_model = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
         valid_ocr_sources = ['flash', 'unstructured', 'llamaparse']
@@ -322,7 +334,7 @@ class DprRetriever(VisionRetriever):
                 if extracted_text is not None:
                     with open(cache_file, 'w', encoding='utf-8') as f:
                         f.write(extracted_text)
-            self.doc_texts.append(extracted_text)
+            self.doc_texts.append(extracted_text if extracted_text is not None else '')
 
         # Batch encoding of documents
         valid_docs = [(doc_text, doc_hash)
@@ -468,6 +480,8 @@ class DprRetriever(VisionRetriever):
             
             if self.reranker == 'cohere':
                 reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_results, list_emb_documents)
+            elif self.reranker == 'jina':
+                reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_results, list_emb_documents)
             else:
                 assert self.reranker == 'rrf'
                 reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents)
@@ -489,6 +503,17 @@ class DprRetriever(VisionRetriever):
             doc_id = list(combined_results)[int(result.index)]
             reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
         
+        return reranked_scores
+
+    def rerank_jina(self, query, documents_to_rerank, combined_results, list_emb_documents):
+        with torch.no_grad():
+            sentence_pairs = [[query, doc] for doc in documents_to_rerank]
+            scores = self.jina_model.compute_score(sentence_pairs, max_length=1024)
+
+        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
+        for idx, doc_id in enumerate(combined_results):
+            reranked_scores[list_emb_documents[doc_id]] = scores[idx]
+
         return reranked_scores
 
     def rerank_rrf(self, bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents):
@@ -525,7 +550,7 @@ class DprRetriever(VisionRetriever):
         - lowercase all the words.
         """
         stop_words = set(stopwords.words("english"))
-        tokenized_list = [[] if sentence is None else [word.lower() for word in word_tokenize(sentence)
+        tokenized_list = [[word.lower() for word in word_tokenize(sentence)
                                                        if word.isalnum() and word.lower() not in stop_words]
                           for sentence in documents.values()]
         return tokenized_list

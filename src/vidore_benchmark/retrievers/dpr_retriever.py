@@ -4,6 +4,9 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+import torch
+from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, BitsAndBytesConfig
+
 import cohere
 import google.generativeai as genai
 import numpy as np
@@ -179,6 +182,7 @@ class DprRetriever(VisionRetriever):
     def __init__(self, device: str = "auto"):
         super().__init__()
         self.device = get_torch_device(device)
+        print(f'using device {self.device}')
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
@@ -195,7 +199,7 @@ class DprRetriever(VisionRetriever):
 
         self.reranker = os.environ.get('VIDORE_RERANK')
         valid_rerankers = ['cohere', 'rrf', 'jina']
-        if self.reranker not in valid_rerankers:
+        if self.mode == 'reranked' and self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
         if self.mode == 'reranked' and self.reranker == 'cohere':
@@ -215,11 +219,25 @@ class DprRetriever(VisionRetriever):
             self.jina_model = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
-        valid_ocr_sources = ['flash', 'unstructured', 'llamaparse']
+        valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2']
         if self.ocr_source not in valid_ocr_sources:
             raise ValueError(f"Invalid OCR source: {self.ocr_source}. Valid sources: {valid_ocr_sources}")
 
         self.document_cache_dir = os.path.join(os.getcwd(), f'document_cache_{self.ocr_source}')
+
+        if self.ocr_source == 'idefics2':
+            self.idefics2_processor = AutoProcessor.from_pretrained("HuggingFaceM4/idefics2-8b")
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.float16
+            )
+            self.idefics2_model = AutoModelForVision2Seq.from_pretrained(
+                "HuggingFaceM4/idefics2-8b",
+                torch_dtype=torch.float16,
+                quantization_config=quantization_config,
+            ).to(self.device)
 
     def use_dataset(self, ds):
         if 'synthetic' in ds.name:
@@ -327,9 +345,11 @@ class DprRetriever(VisionRetriever):
                     f = self.ocr_gemini
                 elif self.ocr_source == 'unstructured':
                     f = self.ocr_unstructured
-                else:
-                    assert self.ocr_source == 'llamaparse'
+                elif self.ocr_source == 'llamaparse':
                     f = self.ocr_llama
+                else:
+                    assert self.ocr_source == 'idefics2'
+                    f = self.ocr_idefics2
                 extracted_text = f(doc_image, doc_hash)
                 if extracted_text is not None:
                     with open(cache_file, 'w', encoding='utf-8') as f:
@@ -430,6 +450,26 @@ class DprRetriever(VisionRetriever):
         }
         res = u_client.general.partition(request=req)
         return '\n\n'.join(e['text'] for e in res.elements)
+
+    def ocr_idefics2(self, doc_image: Image.Image, doc_hash: str) -> str:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": "Extract all the text from this image, preserving structure as much as possible."},
+                ]
+            }
+        ]
+        prompt = self.idefics2_processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = self.idefics2_processor(text=prompt, images=[doc_image], return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            generated_ids = self.idefics2_model.generate(**inputs, max_new_tokens=500)
+        generated_text = self.idefics2_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        return generated_text
 
     def get_scores(
             self,

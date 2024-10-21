@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import torch
-from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, BitsAndBytesConfig
+from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, BitsAndBytesConfig, \
+    Qwen2VLForConditionalGeneration
+from qwen_vl_utils import process_vision_info
 
 import cohere
 import google.generativeai as genai
@@ -35,7 +37,6 @@ from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
 
-
 """
 This module uses the following environment variables:
 
@@ -53,10 +54,8 @@ UNSTRUCTURED_API_KEY: API key for Unstructured (if using Unstructured OCR)
 UNSTRUCTURED_API_URL: API URL for Unstructured (if using Unstructured OCR)
 """
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 u_client = None
 llama_parser = None
@@ -121,6 +120,7 @@ STELLA_MODEL = None
 BGE_M3_MODEL = None
 openai_client = None
 
+
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     if provider.startswith('openai'):
         global openai_client
@@ -132,14 +132,18 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         else:
             model_name = 'text-embedding-3-large'
         tiktoken_model = tiktoken.encoding_for_model(model_name)
+
         def tokenize(text: str) -> list[int]:
             return tiktoken_model.encode(text, disallowed_special=())
+
         def token_length(text: str) -> int:
             return len(list(tokenize(text)))
+
         def truncate_to(text, max_tokens):
             truncated_tokens = list(tokenize(text))[:max_tokens]
             truncated_s = tiktoken_model.decode(truncated_tokens)
             return truncated_s
+
         truncated_texts = []
         for text in texts:
             if token_length(text) > 8000:
@@ -191,7 +195,7 @@ class DprRetriever(VisionRetriever):
         if self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
-        self.db = None # initialized by use_dataset
+        self.db = None  # initialized by use_dataset
         self.mode = os.environ.get('VIDORE_SCORE_MODE')
         valid_modes = ['bm25', 'dpr', 'reranked']
         if self.mode not in valid_modes:
@@ -219,7 +223,7 @@ class DprRetriever(VisionRetriever):
             self.jina_model = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
-        valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2']
+        valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2', 'qwen2']
         if self.ocr_source not in valid_ocr_sources:
             raise ValueError(f"Invalid OCR source: {self.ocr_source}. Valid sources: {valid_ocr_sources}")
 
@@ -286,7 +290,8 @@ class DprRetriever(VisionRetriever):
 
     def keyspace_name(self, dataset_name):
         ocr_fragment = '' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
-        return ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}{ocr_fragment}_{self.embeddings_model}').lower()])
+        return ''.join(
+            [c if c.isalnum() else '_' for c in (f'{dataset_name}{ocr_fragment}_{self.embeddings_model}').lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -310,10 +315,11 @@ class DprRetriever(VisionRetriever):
         if any(qe is None for qe in encoded_queries):
             missing_queries = [q for q, qe in zip(queries, encoded_queries) if qe is None]
             fresh_encodings = []
-            for batch in tqdm(chunked(missing_queries, batch_size), total=len(missing_queries)//batch_size + 1, desc="Encoding queries"):
+            for batch in tqdm(chunked(missing_queries, batch_size), total=len(missing_queries) // batch_size + 1,
+                              desc="Encoding queries"):
                 batch_encodings = get_embeddings(self.embeddings_model, batch, is_query=True)
                 fresh_encodings.extend(batch_encodings)
-            
+
             for q, qe in zip(missing_queries, fresh_encodings):
                 query_hash = hashlib.sha256(q.encode()).hexdigest()
                 cache_file = os.path.join(self.query_cache_dir, f"{query_hash}_{self.embeddings_model}.pt")
@@ -328,20 +334,23 @@ class DprRetriever(VisionRetriever):
     def forward_documents(self, documents: list[Image.Image], batch_size: int, **kwargs) -> list[str]:
         batch_size = 16
         with ThreadPoolExecutor() as executor:
-            document_bytes = list(tqdm(executor.map(encode_to_bytes, documents), total=len(documents), desc="Encoding to bytes"))
+            document_bytes = list(
+                tqdm(executor.map(encode_to_bytes, documents), total=len(documents), desc="Encoding to bytes"))
 
         def compute_sha256(content):
             return hashlib.sha256(content).hexdigest()
+
         with ThreadPoolExecutor() as executor:
             document_hashes = list(executor.map(compute_sha256, document_bytes))
 
         logger.info(f"Chunking {len(documents)} documents")
 
         self.doc_texts = []
-        for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents), desc="OCR-ing documents"):
+        for doc_image, doc_hash in tqdm(zip(documents, document_hashes), total=len(documents),
+                                        desc="OCR-ing documents"):
             dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
             cache_file = os.path.join(dataset_cache_dir, f"{doc_hash}.txt")
-            
+
             if os.path.exists(cache_file):
                 with open(cache_file, 'r', encoding='utf-8') as f:
                     extracted_text = f.read()
@@ -354,9 +363,11 @@ class DprRetriever(VisionRetriever):
                     f = self.ocr_unstructured
                 elif self.ocr_source == 'llamaparse':
                     f = self.ocr_llama
-                else:
-                    assert self.ocr_source == 'idefics2'
+                elif self.ocr_source == 'idefics2':
                     f = self.ocr_idefics2
+                else:
+                    assert self.ocr_source == 'qwen2'
+                    f = self.ocr_qwen2
                 extracted_text = f(doc_image, doc_hash)
                 if extracted_text is not None:
                     with open(cache_file, 'w', encoding='utf-8') as f:
@@ -367,21 +378,22 @@ class DprRetriever(VisionRetriever):
         valid_docs = [(doc_text, doc_hash)
                       for doc_text, doc_hash in zip(self.doc_texts, document_hashes)
                       if doc_text is not None and not self.db.document_exists(doc_hash)]
-        
+
         if valid_docs:
             texts_to_encode, hashes_to_encode = zip(*valid_docs)
 
             encoded_docs = []
-            for batch_texts in tqdm(chunked(texts_to_encode, batch_size), total=len(texts_to_encode)//batch_size + 1, desc="Encoding documents"):
+            for batch_texts in tqdm(chunked(texts_to_encode, batch_size), total=len(texts_to_encode) // batch_size + 1,
+                                    desc="Encoding documents"):
                 batch_embeddings = get_embeddings(self.embeddings_model, batch_texts, is_query=False)
                 encoded_docs.extend(batch_embeddings)
-            
+
             print(f"Inserting {len(encoded_docs)} documents to {self.db.keyspace}")
-            
+
             futures = []
             for doc_text, doc_hash, doc_embedding in zip(texts_to_encode, hashes_to_encode, encoded_docs):
                 futures.append(self.db.insert_documents([(doc_hash, doc_text, doc_embedding)]))
-            
+
             for future in tqdm(futures, desc="Waiting for inserts to complete"):
                 future.result()
 
@@ -464,7 +476,8 @@ class DprRetriever(VisionRetriever):
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": "Extract all the text from this image, preserving structure as much as possible."},
+                    {"type": "text",
+                     "text": "Extract all the text from this image, preserving structure as much as possible."},
                 ]
             }
         ]
@@ -475,8 +488,51 @@ class DprRetriever(VisionRetriever):
         with torch.no_grad():
             generated_ids = self.idefics2_model.generate(**inputs, max_new_tokens=500)
         generated_text = self.idefics2_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        
+
         return generated_text
+
+    def ocr_qwen2(self, doc_image: Image.Image, doc_hash: str) -> str:
+        if not hasattr(self, 'qwen2_model'):
+            self.qwen2_model = Qwen2VLForConditionalGeneration.from_pretrained(
+                "Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto"
+            )
+            self.qwen2_processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": doc_image},
+                    {"type": "text",
+                     "text": "Extract all the text from this image, preserving structure as much as possible."},
+                ],
+            }
+        ]
+
+        text = self.qwen2_processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.qwen2_processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+        inputs = inputs.to(self.device)
+
+        with torch.no_grad():
+            generated_ids = self.qwen2_model.generate(**inputs, max_new_tokens=500)
+
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.qwen2_processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
+
+        return output_text
 
     def get_scores(
             self,
@@ -509,7 +565,8 @@ class DprRetriever(VisionRetriever):
 
         assert self.mode == 'reranked'
         final_scores = []
-        for query_idx, (query, query_emb) in enumerate(tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
+        for query_idx, (query, query_emb) in enumerate(
+                tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
             # Get BM25 scores
             bm25_scores = bm25.get_scores(query)
             bm25_top_20 = sorted(enumerate(bm25_scores), key=lambda x: x[1], reverse=True)[:20]
@@ -524,11 +581,13 @@ class DprRetriever(VisionRetriever):
 
             # Prepare documents for reranking
             documents_to_rerank = [self.doc_texts[doc_index] for doc_index in combined_results]
-            
+
             if self.reranker == 'cohere':
-                reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_results, list_emb_documents)
+                reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_results,
+                                                     list_emb_documents)
             elif self.reranker == 'jina':
-                reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_results, list_emb_documents)
+                reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_results,
+                                                   list_emb_documents)
             else:
                 assert self.reranker == 'rrf'
                 reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_results, list_emb_documents)
@@ -544,12 +603,12 @@ class DprRetriever(VisionRetriever):
             model='rerank-multilingual-v3.0',
             top_n=5
         )
-        
+
         reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
         for result in reranked_results.results:
             doc_id = list(combined_results)[int(result.index)]
             reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
-        
+
         return reranked_scores
 
     def rerank_jina(self, query, documents_to_rerank, combined_results, list_emb_documents):
@@ -580,7 +639,8 @@ class DprRetriever(VisionRetriever):
         # Normalize RRF scores
         max_score = max(rrf_scores.values())
         min_score = min(rrf_scores.values())
-        normalized_scores = {doc_id: (score - min_score) / (max_score - min_score) for doc_id, score in rrf_scores.items()}
+        normalized_scores = {doc_id: (score - min_score) / (max_score - min_score) for doc_id, score in
+                             rrf_scores.items()}
 
         # Create the final reranked_scores dictionary
         reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
@@ -598,7 +658,7 @@ class DprRetriever(VisionRetriever):
         """
         stop_words = set(stopwords.words("english"))
         tokenized_list = [[word.lower() for word in word_tokenize(sentence)
-                                                       if word.isalnum() and word.lower() not in stop_words]
+                           if word.isalnum() and word.lower() not in stop_words]
                           for sentence in documents.values()]
         return tokenized_list
 
@@ -610,7 +670,8 @@ class DprRetriever(VisionRetriever):
         else:
             assert self.mode == 'reranked'
             mode_name = f'best_{self.reranker}'
-        fname = ''.join([c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()]) + '.pth'
+        fname = ''.join(
+            [c if c.isalnum() else '_' for c in (f'{dataset_name}_{self.ocr_source}_{mode_name}').lower()]) + '.pth'
         return os.path.join(output_path, fname)
 
     def get_save_all_path(self, output_path):

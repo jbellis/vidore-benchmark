@@ -28,7 +28,7 @@ messages = [
         "content": [
             {
                 "type": "image",
-                "image": "https://eslvault.com/wp-content/plugins/phastpress/phast.php/c2VydmljZT1pbWFnZXMmc3JjPWh0dHBzJTNBJTJGJTJGZXNsdmF1bHQuY29tJTJGd3AtY29udGVudCUyRnVwbG9hZHMlMkYyMDIzJTJGMDglMkZzb2Z0LUMtd29yZHMtbGlzdC5qcGcmY2FjaGVNYXJrZXI9MTcyMzU2MjYyMS00NzY5NSZ0b2tlbj02NDAyNTI1ZTBmYjYwNjc4.q.jpg",
+                "image": "https://www.hachettebookgroup.com/wp-content/uploads/2024/01/9780465096367.jpg",
             },
             {"type": "text", "text": "Extract all the text from this image, preserving structure as much as possible."},
         ],

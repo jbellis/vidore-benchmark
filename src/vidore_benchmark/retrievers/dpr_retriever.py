@@ -502,13 +502,15 @@ class DprRetriever(VisionRetriever):
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": doc_image},
+                    {"type": "image",
+                     "image": doc_image},
                     {"type": "text",
                      "text": "Extract all the text from this image, preserving structure as much as possible."},
                 ],
             }
         ]
 
+        # Preparation for inference
         text = self.qwen2_processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
@@ -522,9 +524,9 @@ class DprRetriever(VisionRetriever):
         )
         inputs = inputs.to(self.device)
 
+        # Inference: Generation of the output
         with torch.no_grad():
-            generated_ids = self.qwen2_model.generate(**inputs, max_new_tokens=500)
-
+            generated_ids = self.qwen2_model.generate(**inputs, max_new_tokens=2048)
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]

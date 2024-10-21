@@ -227,14 +227,21 @@ class DprRetriever(VisionRetriever):
 
         if self.ocr_source == 'idefics2':
             self.idefics2_processor = AutoProcessor.from_pretrained("HuggingFaceM4/idefics2-8b")
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_compute_dtype=torch.float16
+            quantization_config = AwqConfig(
+                bits=4,
+                fuse_max_seq_len=4096,
+                modules_to_fuse={
+                    "attention": ["q_proj", "k_proj", "v_proj", "o_proj"],
+                    "mlp": ["gate_proj", "up_proj", "down_proj"],
+                    "layernorm": ["input_layernorm", "post_attention_layernorm", "norm"],
+                    "use_alibi": False,
+                    "num_attention_heads": 32,
+                    "num_key_value_heads": 8,
+                    "hidden_size": 4096,
+                }
             )
             self.idefics2_model = AutoModelForVision2Seq.from_pretrained(
-                "HuggingFaceM4/idefics2-8b",
+                "HuggingFaceM4/idefics2-8b-AWQ",
                 torch_dtype=torch.float16,
                 quantization_config=quantization_config,
             ).to(self.device)

@@ -161,3 +161,14 @@ yarl==1.9.4
 
 cassandra-driver
 colbert-live>=0.9.0
+cohere
+google-generativeai
+tiktoken
+openai
+unstructured-client
+autoawq
+
+llama-index-core
+llama-parse
+llama-index-readers-file
+python-dotenv

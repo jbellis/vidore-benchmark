@@ -1,8 +1,10 @@
-from typing import Optional
+from typing import Optional, Any
 import torch
 from PIL import Image
 import os
 import logging
+
+from cassandra.query import PreparedStatement
 from colbert.infra import ColBERTConfig
 from colbert.modeling.colbert import ColBERT, colbert_score_reduce
 from colbert.search.strided_tensor import StridedTensor
@@ -80,6 +82,13 @@ class ColbertLiveDB(AstraCQL):
         self.insert_embedding_stmt = self.session.prepare(f"""
             INSERT INTO {self.keyspace}.embeddings (doc_id, embedding_id, embedding) VALUES (?, ?, ?)
         """)
+
+    def get_query_ann(self, embeddings: torch.Tensor, limit: int, params: dict[str, Any]) -> tuple[PreparedStatement, list[tuple]]:
+        params_list = [(emb, emb, limit) for emb in embeddings]
+        return self.query_ann_stmt, params_list
+
+    def get_query_chunks_stmt(self) -> PreparedStatement:
+        return self.query_chunks_stmt
 
     def process_ann_rows(self, result):
         return [(row.doc_id, row.similarity) for row in result]

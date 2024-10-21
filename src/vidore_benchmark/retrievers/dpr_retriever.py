@@ -7,6 +7,7 @@ from typing import Optional
 import torch
 from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, BitsAndBytesConfig, \
     Qwen2VLForConditionalGeneration
+import torch
 from qwen_vl_utils import process_vision_info
 
 import cohere
@@ -493,10 +494,11 @@ class DprRetriever(VisionRetriever):
 
     def ocr_qwen2(self, doc_image: Image.Image, doc_hash: str) -> str:
         if not hasattr(self, 'qwen2_model'):
+            quantization_config = AwqConfig(bits=4, group_size=128, zero_point=True, modules_to_not_convert=["lm_head"])
             self.qwen2_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                "Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto"
+                "Qwen/Qwen2-VL-7B-Instruct-AWQ", torch_dtype="auto", device_map="auto"
             )
-            self.qwen2_processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct")
+            self.qwen2_processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct-AWQ")
 
         messages = [
             {

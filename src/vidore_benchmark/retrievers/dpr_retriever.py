@@ -204,7 +204,7 @@ class DprRetriever(VisionRetriever):
             raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage']
+        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite']
         if self.mode == 'reranked' and self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
@@ -213,7 +213,7 @@ class DprRetriever(VisionRetriever):
         else:
             self.cohere_client = None
 
-        if self.mode == 'reranked' and self.reranker == 'voyage':
+        if self.mode == 'reranked' and (self.reranker == 'voyage' or self.reranker == 'voyage-lite'):
             self.voyage_client = voyageai.Client(api_key=os.environ.get('VOYAGE_API_KEY'))
         else:
             self.voyage_client = None
@@ -599,8 +599,9 @@ class DprRetriever(VisionRetriever):
                 reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
                                                    list_emb_documents)
             elif self.reranker == 'voyage':
-                reranked_scores = self.rerank_voyage(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
-                                                     list_emb_documents)
+                reranked_scores = self.rerank_voyage("rerank-2", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
+            elif self.reranker == 'voyage-lite':
+                reranked_scores = self.rerank_voyage("rerank-2-lite", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
             else:
                 assert self.reranker == 'rrf'
                 reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_ordinals, list_emb_documents)
@@ -635,7 +636,7 @@ class DprRetriever(VisionRetriever):
 
         return reranked_scores
 
-    def rerank_voyage(self, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
+    def rerank_voyage(self, model, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
         # Filter out empty documents and keep track of original indices
         filtered_documents = []
         filtered_indices = []
@@ -650,7 +651,7 @@ class DprRetriever(VisionRetriever):
                 reranked_results = self.voyage_client.rerank(
                     query=query,
                     documents=filtered_documents,
-                    model="rerank-2",
+                    model=model,
                     truncation=False
                 )
             except voyageai.error.RateLimitError:

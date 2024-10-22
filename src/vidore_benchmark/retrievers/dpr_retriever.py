@@ -16,7 +16,7 @@ import numpy as np
 import tiktoken
 import torch
 import unstructured_client
-from FlagEmbedding import BGEM3FlagModel
+from FlagEmbedding import BGEM3FlagModel, FlagReranker
 from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
@@ -204,7 +204,7 @@ class DprRetriever(VisionRetriever):
             raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite']
+        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge']
         if self.mode == 'reranked' and self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
@@ -228,6 +228,11 @@ class DprRetriever(VisionRetriever):
             self.jina_model.eval()
         else:
             self.jina_model = None
+
+        if self.mode == 'reranked' and self.reranker == 'bge':
+            self.bge_reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
+        else:
+            self.bge_reranker = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
         valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2', 'qwen2']
@@ -602,6 +607,8 @@ class DprRetriever(VisionRetriever):
                 reranked_scores = self.rerank_voyage("rerank-2", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
             elif self.reranker == 'voyage-lite':
                 reranked_scores = self.rerank_voyage("rerank-2-lite", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
+            elif self.reranker == 'bge':
+                reranked_scores = self.rerank_bge(self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
             else:
                 assert self.reranker == 'rrf'
                 reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_ordinals, list_emb_documents)
@@ -666,6 +673,20 @@ class DprRetriever(VisionRetriever):
             original_index = filtered_indices[result.index]
             doc_id = combined_ordinals[original_index]
             reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
+
+        return reranked_scores
+
+    def rerank_bge(self, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
+        # Prepare input for BGE reranker
+        rerank_input = [[query, doc] for doc in documents_to_rerank]
+        
+        # Compute scores
+        scores = self.bge_reranker.compute_score(rerank_input, normalize=True)
+
+        # Create the final reranked_scores dictionary
+        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
+        for idx, doc_id in enumerate(combined_ordinals):
+            reranked_scores[list_emb_documents[doc_id]] = scores[idx]
 
         return reranked_scores
 

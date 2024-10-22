@@ -11,6 +11,7 @@ COLOR_PALETTE = {
     'cohere': '#1f77b4',  # blue
     'voyage': '#8c564b',  # brown
     'voyage-lite': '#e377c2',  # pink
+    'bge': '#2ca02c',  # green (same as bm25)
 }
 
 def get_embeddings_model(dataset):
@@ -30,7 +31,7 @@ def get_embeddings_model(dataset):
         return None
 
 def extract_dataset_and_rerank_type(filename):
-    # 1. Split off cohere / rrf / jina / voyage / voyage-lite as rerank type
+    # 1. Split off cohere / rrf / jina / voyage / voyage-lite / bge as rerank type
     if filename.endswith('_cohere.pth'):
         rerank_type = 'cohere'
         parts = filename[:-11].split('_')  # Remove '_cohere.pth'
@@ -46,6 +47,9 @@ def extract_dataset_and_rerank_type(filename):
     elif filename.endswith('_voyage_lite.pth'):
         rerank_type = 'voyage-lite'
         parts = filename[:-15].split('_')  # Remove '_voyage_lite.pth'
+    elif filename.endswith('_bge.pth'):
+        rerank_type = 'bge'
+        parts = filename[:-8].split('_')  # Remove '_bge.pth'
     else:
         return None, None
 
@@ -88,7 +92,7 @@ def read_ndcg_value(file_path):
 
 def main():
     output_dir = 'outputs'
-    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere', 'voyage', 'voyage-lite']
+    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -105,6 +109,7 @@ def main():
                 jina_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_jina.pth'))
                 voyage_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage.pth'))
                 voyage_lite_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage_lite.pth'))
+                bge_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_bge.pth'))
                 bm25_file_path = os.path.join(output_dir, get_bm25_filename(filename))
                 dpr_filename = get_dpr_filename(filename, dataset)
                 dpr_file_path = os.path.join(output_dir, dpr_filename) if dpr_filename else None
@@ -137,6 +142,12 @@ def main():
                 else:
                     print(f"Warning: Voyage-lite file not found: {voyage_lite_file_path}")
                     data[dataset]['voyage-lite'] = 0
+
+                if os.path.exists(bge_file_path):
+                    data[dataset]['bge'] = read_ndcg_value(bge_file_path)
+                else:
+                    print(f"Warning: BGE file not found: {bge_file_path}")
+                    data[dataset]['bge'] = 0
 
                 if os.path.exists(bm25_file_path):
                     data[dataset]['bm25'] = read_ndcg_value(bm25_file_path)
@@ -172,9 +183,9 @@ def main():
                     ha='center', va='bottom', fontsize=8, rotation=90)
 
     ax.set_ylabel('NDCG@5')
-    ax.set_title('NDCG@5 by Dataset and Score Type')
+    ax.set_title('NDCG@5 by Dataset')
     ax.set_xticks([xi + 2 * width for xi in x])
-    ax.set_xticklabels(datasets, rotation=45, ha='right')
+    ax.set_xticklabels([dataset.split('_test')[0] for dataset in datasets], rotation=45, ha='right')
     ax.legend()
 
     plt.tight_layout()

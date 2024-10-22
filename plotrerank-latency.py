@@ -2,13 +2,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Data
-models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite']
+models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge']
 times = {
     'rrf': 21,
     'jina': 230,
     'cohere': 90,
     'voyage': 311,
-    'voyage-lite': 240
+    'voyage-lite': 240,
+    'bge': 115
 }
 
 # Calculate speeds
@@ -22,7 +23,8 @@ colors = {
     'jina': '#9467bd',     # purple
     'cohere': '#1f77b4',   # blue
     'voyage': '#8c564b',   # brown
-    'voyage-lite': '#e377c2'  # pink
+    'voyage-lite': '#e377c2',  # pink
+    'bge': '#2ca02c'       # green
 }
 
 # Create the plot

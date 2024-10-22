@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Data
-models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite']
+models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge']
 
 # Usage data
 searches = 2971
@@ -15,6 +15,7 @@ prices = {
     'cohere': searches * (2 / 1000),  # $2 per 1k searches
     'voyage': (tokens / 1_000_000) * 0.05,  # $0.05 per 1M tokens
     'voyage-lite': (tokens / 1_000_000) * 0.02,  # $0.02 per 1M tokens
+    'bge': 0,  # Free
 }
 
 # Colors (same as previous)
@@ -23,7 +24,8 @@ colors = {
     'jina': '#9467bd',     # purple
     'cohere': '#1f77b4',   # blue
     'voyage': '#8c564b',   # brown
-    'voyage-lite': '#e377c2'  # pink
+    'voyage-lite': '#e377c2',  # pink
+    'bge': '#2ca02c'       # green
 }
 
 # Create the plot

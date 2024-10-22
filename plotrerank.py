@@ -9,6 +9,8 @@ COLOR_PALETTE = {
     'rrf': '#ff7f0e',  # orange
     'jina': '#9467bd',  # purple
     'cohere': '#1f77b4',  # blue
+    'voyage': '#8c564b',  # brown
+    'voyage-lite': '#e377c2',  # pink
 }
 
 def get_embeddings_model(dataset):
@@ -28,7 +30,7 @@ def get_embeddings_model(dataset):
         return None
 
 def extract_dataset_and_rerank_type(filename):
-    # 1. Split off cohere / rrf / jina as rerank type
+    # 1. Split off cohere / rrf / jina / voyage / voyage-lite as rerank type
     if filename.endswith('_cohere.pth'):
         rerank_type = 'cohere'
         parts = filename[:-11].split('_')  # Remove '_cohere.pth'
@@ -38,6 +40,12 @@ def extract_dataset_and_rerank_type(filename):
     elif filename.endswith('_jina.pth'):
         rerank_type = 'jina'
         parts = filename[:-9].split('_')  # Remove '_jina.pth'
+    elif filename.endswith('_voyage.pth'):
+        rerank_type = 'voyage'
+        parts = filename[:-11].split('_')  # Remove '_voyage.pth'
+    elif filename.endswith('_voyage_lite.pth'):
+        rerank_type = 'voyage-lite'
+        parts = filename[:-15].split('_')  # Remove '_voyage_lite.pth'
     else:
         return None, None
 
@@ -80,7 +88,7 @@ def read_ndcg_value(file_path):
 
 def main():
     output_dir = 'outputs'
-    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere']
+    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere', 'voyage', 'voyage-lite']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -95,6 +103,8 @@ def main():
 
                 cohere_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_cohere.pth'))
                 jina_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_jina.pth'))
+                voyage_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage.pth'))
+                voyage_lite_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage_lite.pth'))
                 bm25_file_path = os.path.join(output_dir, get_bm25_filename(filename))
                 dpr_filename = get_dpr_filename(filename, dataset)
                 dpr_file_path = os.path.join(output_dir, dpr_filename) if dpr_filename else None
@@ -116,6 +126,18 @@ def main():
                     print(f"Warning: Jina file not found: {jina_file_path}")
                     data[dataset]['jina'] = 0
 
+                if os.path.exists(voyage_file_path):
+                    data[dataset]['voyage'] = read_ndcg_value(voyage_file_path)
+                else:
+                    print(f"Warning: Voyage file not found: {voyage_file_path}")
+                    data[dataset]['voyage'] = 0
+
+                if os.path.exists(voyage_lite_file_path):
+                    data[dataset]['voyage-lite'] = read_ndcg_value(voyage_lite_file_path)
+                else:
+                    print(f"Warning: Voyage-lite file not found: {voyage_lite_file_path}")
+                    data[dataset]['voyage-lite'] = 0
+
                 if os.path.exists(bm25_file_path):
                     data[dataset]['bm25'] = read_ndcg_value(bm25_file_path)
                 else:
@@ -134,7 +156,7 @@ def main():
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.15  # Width of each bar (75% of 0.2)
+    width = 0.11  # Width of each bar (adjusted for 7 score types)
 
     fig, ax = plt.subplots(figsize=(20, 10))
 

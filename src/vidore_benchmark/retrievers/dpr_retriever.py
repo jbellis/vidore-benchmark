@@ -636,12 +636,20 @@ class DprRetriever(VisionRetriever):
         return reranked_scores
 
     def rerank_voyage(self, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
+        # Filter out empty documents and keep track of original indices
+        filtered_documents = []
+        filtered_indices = []
+        for idx, doc in enumerate(documents_to_rerank):
+            if doc.strip():
+                filtered_documents.append(doc)
+                filtered_indices.append(idx)
+
         backoff = 1.0
         while True:
             try:
                 reranked_results = self.voyage_client.rerank(
                     query=query,
-                    documents=documents_to_rerank,
+                    documents=filtered_documents,
                     model="rerank-2",
                     truncation=False
                 )
@@ -654,7 +662,8 @@ class DprRetriever(VisionRetriever):
 
         reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
         for result in reranked_results.results:
-            doc_id = combined_ordinals[result.index]
+            original_index = filtered_indices[result.index]
+            doc_id = combined_ordinals[original_index]
             reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
 
         return reranked_scores

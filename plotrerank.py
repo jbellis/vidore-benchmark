@@ -4,14 +4,14 @@ import matplotlib.pyplot as plt
 
 # Define a color palette
 COLOR_PALETTE = {
-    'bm25': '#2ca02c',  # green
-    'dpr': '#d62728',   # red
+    'bm25': '#808080',  # medium grey
+    'dpr': '#A9A9A9',   # dark grey
     'rrf': '#ff7f0e',  # orange
     'jina': '#9467bd',  # purple
     'cohere': '#1f77b4',  # blue
     'voyage': '#8c564b',  # brown
     'voyage-lite': '#e377c2',  # pink
-    'bge': '#2ca02c',  # green (same as bm25)
+    'bge': '#2ca02c',  # green
 }
 
 def get_embeddings_model(dataset):
@@ -169,7 +169,7 @@ def main():
     x = range(len(datasets))
     width = 0.11  # Width of each bar (adjusted for 7 score types)
 
-    fig, ax = plt.subplots(figsize=(20, 10))
+    fig, ax = plt.subplots(figsize=(24, 10))
 
     for i, score_type in enumerate(score_types):
         values = [data[dataset].get(score_type, 0) for dataset in datasets]
@@ -184,11 +184,11 @@ def main():
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset')
-    ax.set_xticks([xi + 2 * width for xi in x])
-    ax.set_xticklabels([dataset.split('_test')[0] for dataset in datasets], rotation=45, ha='right')
+    ax.set_xticks([xi + (len(score_types) - 1) * width / 2 for xi in x])
+    ax.set_xticklabels([dataset.split('_test')[0] for dataset in datasets], ha='center')
     ax.legend()
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0.03, 1, 1])
     plt.savefig('score_comparison.png', dpi=300, bbox_inches='tight')
     plt.show()
     print("Graph saved as score_comparison.png and displayed")

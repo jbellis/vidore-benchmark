@@ -16,6 +16,7 @@ import numpy as np
 import tiktoken
 import torch
 import unstructured_client
+import requests
 from FlagEmbedding import BGEM3FlagModel
 from PIL import Image
 from cassandra.cluster import Session, Cluster
@@ -31,8 +32,6 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from unstructured_client.models import shared
-from transformers import AutoModelForSequenceClassification
-
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
@@ -219,15 +218,9 @@ class DprRetriever(VisionRetriever):
             self.voyage_client = None
 
         if self.mode == 'reranked' and self.reranker == 'jina':
-            self.jina_model = AutoModelForSequenceClassification.from_pretrained(
-                'jinaai/jina-reranker-v2-base-multilingual',
-                torch_dtype="auto",
-                trust_remote_code=True,
-            )
-            self.jina_model.to(self.device)
-            self.jina_model.eval()
+            self.jina_api_key = "jina_7c569e70ff4149e38a4d0307c56f62b7MB3yT9Ue8PToIwxSbrv7FrsOxF43"
         else:
-            self.jina_model = None
+            self.jina_api_key = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
         valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2', 'qwen2']
@@ -574,7 +567,7 @@ class DprRetriever(VisionRetriever):
             return torch.tensor(scores)
 
         assert self.mode == 'reranked'
-        final_scores = []
+        token_count = 0
         for query_idx, (query, query_emb) in enumerate(
                 tqdm(zip(tokenized_queries, list_emb_queries), total=len(list_emb_queries), desc="Computing scores")):
             # Get BM25 scores
@@ -591,24 +584,15 @@ class DprRetriever(VisionRetriever):
 
             # Prepare documents for reranking
             documents_to_rerank = [self.doc_texts[doc_index] for doc_index in combined_ordinals]
+            all_tokens = ' '.join([self.query_texts[query_idx]] + documents_to_rerank)
+            tiktoken_model = tiktoken.encoding_for_model('text-embedding-3-small')
+            token_count += len(tiktoken_model.encode(all_tokens, disallowed_special=()))
 
-            if self.reranker == 'cohere':
-                reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
-                                                     list_emb_documents)
-            elif self.reranker == 'jina':
-                reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
-                                                   list_emb_documents)
-            elif self.reranker == 'voyage':
-                reranked_scores = self.rerank_voyage("rerank-2", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
-            elif self.reranker == 'voyage-lite':
-                reranked_scores = self.rerank_voyage("rerank-2-lite", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
-            else:
-                assert self.reranker == 'rrf'
-                reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_ordinals, list_emb_documents)
+        print(len(list_emb_queries), 'queries')
+        print(token_count, 'total rerank tokens')
 
-            final_scores.append([reranked_scores[doc_id] for doc_id in list_emb_documents])
-
-        return torch.tensor(final_scores)
+        # return a tensor of zeros for each document
+        return torch.zeros((len(list_emb_queries), len(list_emb_documents)))
 
     def rerank_cohere(self, query, documents_to_rerank, combined_ordinals, list_emb_documents):
         reranked_results = self.cohere_client.rerank(
@@ -626,13 +610,25 @@ class DprRetriever(VisionRetriever):
         return reranked_scores
 
     def rerank_jina(self, query, documents_to_rerank, combined_ordinals, list_emb_documents):
-        with torch.no_grad():
-            sentence_pairs = [[query, doc] for doc in documents_to_rerank]
-            scores = self.jina_model.compute_score(sentence_pairs, max_length=1024)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.jina_api_key}"
+        }
+
+        data = {
+            "model": "jina-reranker-v2-base-multilingual",
+            "query": query,
+            "top_n": len(documents_to_rerank),
+            "documents": documents_to_rerank
+        }
+
+        response = requests.post("https://api.jina.ai/v1/rerank", headers=headers, json=data)
+        results = response.json()["results"]
 
         reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for idx, doc_id in enumerate(combined_ordinals):
-            reranked_scores[list_emb_documents[doc_id]] = scores[idx]
+        for result in results:
+            doc_id = combined_ordinals[result["index"]]
+            reranked_scores[list_emb_documents[doc_id]] = result["relevance_score"]
 
         return reranked_scores
 

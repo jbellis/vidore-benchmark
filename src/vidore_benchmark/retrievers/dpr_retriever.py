@@ -5,22 +5,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, BitsAndBytesConfig, \
-    Qwen2VLForConditionalGeneration
-from qwen_vl_utils import process_vision_info
-
 import voyageai
 import cohere
 import google.generativeai as genai
 import numpy as np
 import tiktoken
 import torch
-import unstructured_client
 from FlagEmbedding import BGEM3FlagModel, FlagReranker
 from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
-from google.api_core.exceptions import InternalServerError
 from more_itertools import chunked
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -35,15 +29,16 @@ from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
 from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, Qwen2OcrProvider
+from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, RRFRerankProvider
 
 """
 This module uses the following environment variables:
 
 VIDORE_SCORE_MODE: The scoring mode to use ('bm25', 'dpr', or 'reranked')
-VIDORE_OCR: The OCR source to use ('flash', 'unstructured', or 'llamaparse')
+VIDORE_OCR: The OCR source to use ('flash', 'unstructured', 'llamaparse', 'idefics2', or 'qwen2')
 VIDORE_DPR_EMBEDDINGS: The embeddings model to use ('openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3')
                        or 'best' for the hardcoded best results for each dataset (useful when doing rerank)
-VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere' or 'rrf')
+VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', or 'bge')
 
 Optional environment variables:
 OPENAI_API_KEY: API key for OpenAI (if using OpenAI embeddings)
@@ -206,31 +201,31 @@ class DprRetriever(VisionRetriever):
         if self.mode == 'reranked' and self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
-        if self.mode == 'reranked' and self.reranker == 'cohere':
-            self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+        if self.mode == 'reranked':
+            if self.reranker == 'cohere':
+                cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+                self.rerank_provider = CohereRerankProvider(cohere_client)
+            elif self.reranker == 'jina':
+                jina_model = AutoModelForSequenceClassification.from_pretrained(
+                    'jinaai/jina-reranker-v2-base-multilingual',
+                    torch_dtype="auto",
+                    trust_remote_code=True,
+                )
+                jina_model.to(self.device)
+                jina_model.eval()
+                self.rerank_provider = JinaRerankProvider(jina_model)
+            elif self.reranker == 'voyage' or self.reranker == 'voyage-lite':
+                voyage_client = voyageai.Client(api_key=os.environ.get('VOYAGE_API_KEY'))
+                self.rerank_provider = VoyageRerankProvider(voyage_client)
+            elif self.reranker == 'bge':
+                bge_reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
+                self.rerank_provider = BGERerankProvider(bge_reranker)
+            elif self.reranker == 'rrf':
+                self.rerank_provider = RRFRerankProvider()
+            else:
+                raise ValueError(f"Invalid reranker: {self.reranker}")
         else:
-            self.cohere_client = None
-
-        if self.mode == 'reranked' and (self.reranker == 'voyage' or self.reranker == 'voyage-lite'):
-            self.voyage_client = voyageai.Client(api_key=os.environ.get('VOYAGE_API_KEY'))
-        else:
-            self.voyage_client = None
-
-        if self.mode == 'reranked' and self.reranker == 'jina':
-            self.jina_model = AutoModelForSequenceClassification.from_pretrained(
-                'jinaai/jina-reranker-v2-base-multilingual',
-                torch_dtype="auto",
-                trust_remote_code=True,
-            )
-            self.jina_model.to(self.device)
-            self.jina_model.eval()
-        else:
-            self.jina_model = None
-
-        if self.mode == 'reranked' and self.reranker == 'bge':
-            self.bge_reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
-        else:
-            self.bge_reranker = None
+            self.rerank_provider = None
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
         valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2', 'qwen2']
@@ -435,125 +430,16 @@ class DprRetriever(VisionRetriever):
             # Prepare documents for reranking
             documents_to_rerank = [self.doc_texts[doc_index] for doc_index in combined_ordinals]
 
-            if self.reranker == 'cohere':
-                reranked_scores = self.rerank_cohere(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
-                                                     list_emb_documents)
-            elif self.reranker == 'jina':
-                reranked_scores = self.rerank_jina(self.query_texts[query_idx], documents_to_rerank, combined_ordinals,
-                                                   list_emb_documents)
-            elif self.reranker == 'voyage':
-                reranked_scores = self.rerank_voyage("rerank-2", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
-            elif self.reranker == 'voyage-lite':
-                reranked_scores = self.rerank_voyage("rerank-2-lite", self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
-            elif self.reranker == 'bge':
-                reranked_scores = self.rerank_bge(self.query_texts[query_idx], documents_to_rerank, combined_ordinals, list_emb_documents)
-            else:
-                assert self.reranker == 'rrf'
-                reranked_scores = self.rerank_rrf(bm25_top_20, dpr_scores_indexed, combined_ordinals, list_emb_documents)
+            reranked_scores = self.rerank_provider.rerank(
+                self.query_texts[query_idx],
+                documents_to_rerank,
+                combined_ordinals,
+                list_emb_documents
+            )
 
             final_scores.append([reranked_scores[doc_id] for doc_id in list_emb_documents])
 
         return torch.tensor(final_scores)
-
-    def rerank_cohere(self, query, documents_to_rerank, combined_ordinals, list_emb_documents):
-        reranked_results = self.cohere_client.rerank(
-            query=query,
-            documents=documents_to_rerank,
-            model='rerank-multilingual-v3.0',
-            top_n=5
-        )
-
-        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for result in reranked_results.results:
-            doc_id = combined_ordinals[int(result.index)]
-            reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
-
-        return reranked_scores
-
-    def rerank_jina(self, query, documents_to_rerank, combined_ordinals, list_emb_documents):
-        with torch.no_grad():
-            sentence_pairs = [[query, doc] for doc in documents_to_rerank]
-            scores = self.jina_model.compute_score(sentence_pairs, max_length=1024)
-
-        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for idx, doc_id in enumerate(combined_ordinals):
-            reranked_scores[list_emb_documents[doc_id]] = scores[idx]
-
-        return reranked_scores
-
-    def rerank_voyage(self, model, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
-        # Filter out empty documents and keep track of original indices
-        filtered_documents = []
-        filtered_indices = []
-        for idx, doc in enumerate(documents_to_rerank):
-            if doc.strip():
-                filtered_documents.append(doc)
-                filtered_indices.append(idx)
-
-        backoff = 1.0
-        while True:
-            try:
-                reranked_results = self.voyage_client.rerank(
-                    query=query,
-                    documents=filtered_documents,
-                    model=model,
-                    truncation=False
-                )
-            except voyageai.error.RateLimitError:
-                print(f'Rate limit error. Waiting {backoff} seconds and trying again.')
-                time.sleep(backoff)
-                backoff *= 2
-            else:
-                break
-
-        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for result in reranked_results.results:
-            original_index = filtered_indices[result.index]
-            doc_id = combined_ordinals[original_index]
-            reranked_scores[list_emb_documents[doc_id]] = result.relevance_score
-
-        return reranked_scores
-
-    def rerank_bge(self, query: str, documents_to_rerank: list[str], combined_ordinals, list_emb_documents):
-        # Prepare input for BGE reranker
-        rerank_input = [[query, doc] for doc in documents_to_rerank]
-        
-        # Compute scores
-        scores = self.bge_reranker.compute_score(rerank_input, normalize=True)
-
-        # Create the final reranked_scores dictionary
-        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for idx, doc_id in enumerate(combined_ordinals):
-            reranked_scores[list_emb_documents[doc_id]] = scores[idx]
-
-        return reranked_scores
-
-    def rerank_rrf(self, bm25_top_20, dpr_scores_indexed, combined_ordinals, list_emb_documents):
-        k = 20  # A common default value for k in RRF
-
-        # Create dictionaries to store rankings
-        bm25_ranks = {doc_id: rank + 1 for rank, (doc_id, _) in enumerate(bm25_top_20)}
-        dpr_ranks = {doc_id: rank + 1 for rank, (doc_id, _) in enumerate(dpr_scores_indexed)}
-
-        rrf_scores = {}
-        for doc_id in combined_ordinals:
-            bm25_rank = bm25_ranks.get(doc_id, len(combined_ordinals) + 1)
-            dpr_rank = dpr_ranks.get(doc_id, len(combined_ordinals) + 1)
-            rrf_score = 1 / (k + bm25_rank) + 1 / (k + dpr_rank)
-            rrf_scores[doc_id] = rrf_score
-
-        # Normalize RRF scores
-        max_score = max(rrf_scores.values())
-        min_score = min(rrf_scores.values())
-        normalized_scores = {doc_id: (score - min_score) / (max_score - min_score) for doc_id, score in
-                             rrf_scores.items()}
-
-        # Create the final reranked_scores dictionary
-        reranked_scores = {doc_id: 0.0 for doc_id in list_emb_documents}
-        for doc_id, score in normalized_scores.items():
-            reranked_scores[list_emb_documents[doc_id]] = score
-
-        return reranked_scores
 
     def preprocess_text(self, documents: dict[int, str]) -> list[list[str]]:
         """
@@ -582,3 +468,5 @@ class DprRetriever(VisionRetriever):
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')
+from abc import ABC, abstractmethod
+

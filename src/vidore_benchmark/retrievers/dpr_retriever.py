@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import os
-import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -22,7 +21,8 @@ from openai import OpenAI
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoModelForSequenceClassification, AutoModel, AutoTokenizer
+import torch.nn.functional as F
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
@@ -113,6 +113,8 @@ class DprDB:
 
 STELLA_MODEL = None
 BGE_M3_MODEL = None
+GTE_MODEL = None
+GTE_TOKENIZER = None
 openai_client = None
 
 
@@ -167,6 +169,21 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         with torch.no_grad():
             output = BGE_M3_MODEL.encode(texts, max_length=512)["dense_vecs"]
         return output.tolist()
+    elif provider.startswith('gte-large'):
+        global GTE_MODEL, GTE_TOKENIZER
+        if GTE_MODEL is None or GTE_TOKENIZER is None:
+            model_path = 'Alibaba-NLP/gte-large-en-v1.5'
+            GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
+            GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
+        
+        batch_dict = GTE_TOKENIZER(texts, max_length=8192, padding=True, truncation=True, return_tensors='pt')
+        batch_dict = {k: v.cuda() for k, v in batch_dict.items()}
+        
+        with torch.no_grad():
+            outputs = GTE_MODEL(**batch_dict)
+        embeddings = outputs.last_hidden_state[:, 0]
+        embeddings = F.normalize(embeddings, p=2, dim=1)
+        return embeddings.cpu().tolist()
     else:
         raise ValueError(f"Invalid embedding provider: {provider}")
 
@@ -186,7 +203,7 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'best']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'gte-large', 'best']
         if self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
@@ -277,6 +294,8 @@ class DprRetriever(VisionRetriever):
         elif self.embeddings_model == 'stella':
             dim = 1024
         elif self.embeddings_model == 'bge-m3':
+            dim = 1024
+        elif self.embeddings_model == 'gte-large':
             dim = 1024
         else:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")

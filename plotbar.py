@@ -12,6 +12,7 @@ COLOR_PALETTE = {
     'openai_v3_large': '#2ca02c',  # green
     'bge_m3': '#9467bd',  # purple
     'bm25': '#8c564b',  # brown
+    'gte_large': '#e377c2',  # pink
 }
 
 def extract_dataset_and_model(filename):
@@ -22,7 +23,8 @@ def extract_dataset_and_model(filename):
         'openai_v3_small': 'openai_v3_small',
         'openai_v3_large': 'openai_v3_large',
         'bge_m3': 'bge_m3',
-        'bm25': 'bm25'
+        'bm25': 'bm25',
+        'gte_large': 'gte_large'
     }
     
     for model in models:
@@ -40,7 +42,7 @@ def read_ndcg_value(file_path):
 
 def main():
     output_dir = 'outputs-dpr'
-    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'bge_m3', 'bm25']
+    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'bge_m3', 'bm25', 'gte_large']
     data = {}
 
     for filename in os.listdir(output_dir):

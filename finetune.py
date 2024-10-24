@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import random
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
@@ -14,7 +15,7 @@ class ArxivQADataset(Dataset):
     def __init__(self, preprocessed_file: str, ocr_dir: str, num_files: int, tokenizer):
         self.questions = []
         self.positive_ocr_texts = []
-        self.negative_ocr_texts = []
+        self.all_ocr_texts = []
         self.tokenizer = tokenizer
         self.load_data(preprocessed_file, ocr_dir, num_files)
 
@@ -25,7 +26,6 @@ class ArxivQADataset(Dataset):
                 data = json.loads(line.strip())
                 hash_to_question[data['image_hash']] = data['question']
 
-        all_ocr_texts = []
         for i, filename in enumerate(os.listdir(ocr_dir)):
             if i >= num_files:
                 break
@@ -33,17 +33,12 @@ class ArxivQADataset(Dataset):
             file_hash = os.path.splitext(filename)[0]
             with open(os.path.join(ocr_dir, filename), 'r') as f:
                 ocr_text = f.read().strip()
-            all_ocr_texts.append(ocr_text)
+            self.all_ocr_texts.append(ocr_text)
 
             if file_hash in hash_to_question:
                 question = hash_to_question[file_hash]
                 self.questions.append(question)
                 self.positive_ocr_texts.append(ocr_text)
-
-        # Add negative examples
-        for i in range(len(self.questions)):
-            negative_idx = (i + 1) % len(all_ocr_texts)  # Simple way to get a different document
-            self.negative_ocr_texts.append(all_ocr_texts[negative_idx])
 
     def __len__(self):
         return len(self.questions)
@@ -51,7 +46,12 @@ class ArxivQADataset(Dataset):
     def __getitem__(self, idx):
         question = self.questions[idx]
         positive_ocr_text = self.positive_ocr_texts[idx]
-        negative_ocr_text = self.negative_ocr_texts[idx]
+        
+        # Randomly select a negative example that's different from the positive one
+        negative_idx = idx
+        while negative_idx == idx:
+            negative_idx = random.randint(0, len(self.all_ocr_texts) - 1)
+        negative_ocr_text = self.all_ocr_texts[negative_idx]
         
         question_encoding = self.tokenizer(question, truncation=True, padding='max_length', max_length=SEQUENCE_LENGTH, return_tensors='pt')
         positive_ocr_encoding = self.tokenizer(positive_ocr_text, truncation=True, padding='max_length', max_length=SEQUENCE_LENGTH, return_tensors='pt')

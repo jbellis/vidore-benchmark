@@ -5,7 +5,7 @@ import random
 import matplotlib.pyplot as plt
 
 # Define a color palette
-COLOR_PALETTE = {
+MODEL_COLORS = {
     'stella': '#1f77b4',  # blue
     'gemini_004': '#ff7f0e',  # orange
     'openai_v3_small': '#65ff3d',  # light green (50% more saturated)
@@ -17,20 +17,11 @@ COLOR_PALETTE = {
 
 def extract_dataset_and_model(filename):
     parts = filename.split('_')
-    models = {
-        'stella': 'stella',
-        'gemini_004': 'gemini_004',
-        'openai_v3_small': 'openai_v3_small',
-        'openai_v3_large': 'openai_v3_large',
-        'bge_m3': 'bge_m3',
-        'bm25': 'bm25',
-        'gte_large': 'gte_large'
-    }
-    
-    for model in models:
+
+    for model in MODEL_COLORS.keys():
         if filename.endswith(f"{model}.pth"):
             dataset = '_'.join(parts[1:-len(model.split('_'))])
-            return dataset, models[model]
+            return dataset, model
     
     return None, None
 
@@ -42,7 +33,7 @@ def read_ndcg_value(file_path):
 
 def main():
     output_dir = 'outputs-dpr'
-    models = ['stella', 'gemini_004', 'openai_v3_small', 'openai_v3_large', 'bge_m3', 'bm25', 'gte_large']
+    models = MODEL_COLORS.keys()
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -69,7 +60,7 @@ def main():
     for i, model in enumerate(models):
         values = [data[dataset].get(model, 0) for dataset in datasets]
         
-        bars = ax.bar([xi + i * width for xi in x], values, width, label=model, color=COLOR_PALETTE[model])
+        bars = ax.bar([xi + i * width for xi in x], values, width, label=model, color=MODEL_COLORS[model])
         
         # Add text labels on top of each bar
         for bar in bars:

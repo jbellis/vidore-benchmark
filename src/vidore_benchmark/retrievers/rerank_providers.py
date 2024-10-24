@@ -4,6 +4,7 @@ from abc import abstractmethod, ABC
 
 import torch
 import voyageai
+import requests
 
 
 class RerankProvider(ABC):
@@ -117,3 +118,35 @@ class RRFRerankProvider(RerankProvider):
         # It currently relies on bm25_top_20 and dpr_scores_indexed which are not passed as parameters
         # For now, we'll leave it as a placeholder
         raise NotImplementedError("RRF reranking needs to be adapted to the new structure")
+
+
+class NvidiaRerankProvider(RerankProvider):
+    def __init__(self):
+        self.invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-3_2-nv-rerankqa-1b-v1/reranking"
+        nvidia_api_key = os.environ.get('NVIDIA_API_KEY')
+        if nvidia_api_key is None:
+            raise ValueError("NVIDIA_API_KEY environment variable is not set")
+        self.headers = {
+            "Authorization": f"Bearer {nvidia_api_key}",
+            "Accept": "application/json",
+        }
+        self.session = requests.Session()
+
+    def rerank(self, query: str, documents_to_rerank: list[str], document_ids: list[int]) -> dict[int, float]:
+        payload = {
+            "model": "nvidia/llama-3.2-nv-rerankqa-1b-v1",
+            "query": {
+                "text": query
+            },
+            "passages": [{"text": doc} for doc in documents_to_rerank]
+        }
+
+        response = self.session.post(self.invoke_url, headers=self.headers, json=payload)
+        response.raise_for_status()
+        response_body = response.json()
+
+        # Assuming the response contains a 'scores' field with the reranked scores
+        reranked_scores = response_body.get('scores', [])
+
+        # Create a dictionary mapping document IDs to their reranked scores
+        return {doc_id: score for doc_id, score in zip(document_ids, reranked_scores)}

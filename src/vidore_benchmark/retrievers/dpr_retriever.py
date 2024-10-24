@@ -29,7 +29,7 @@ from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
 from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, Qwen2OcrProvider
-from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, RRFRerankProvider
+from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, RRFRerankProvider, NvidiaRerankProvider
 
 """
 This module uses the following environment variables:
@@ -42,6 +42,7 @@ VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere
 
 Optional environment variables:
 OPENAI_API_KEY: API key for OpenAI (if using OpenAI embeddings)
+NVIDIA_API_KEY: API key for NVIDIA (if using NVIDIA reranker)
 COHERE_API_KEY: API key for Cohere (if using Cohere reranker)
 VOYAGE_API_KEY: API key for Voyage (if using Voyage reranker)
 LLAMA_CLOUD_API_KEY: API key for LlamaParse (if using LlamaParse OCR)
@@ -214,7 +215,7 @@ class DprRetriever(VisionRetriever):
             raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge']
+        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia']
         if self.mode == 'reranked' and self.reranker not in valid_rerankers:
             raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
 
@@ -229,6 +230,8 @@ class DprRetriever(VisionRetriever):
                 self.rerank_provider = BGERerankProvider()
             elif self.reranker == 'rrf':
                 self.rerank_provider = RRFRerankProvider()
+            elif self.reranker == 'nvidia':
+                self.rerank_provider = NvidiaRerankProvider()
             else:
                 raise ValueError(f"Invalid reranker: {self.reranker}")
         else:

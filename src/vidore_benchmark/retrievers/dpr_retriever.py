@@ -442,11 +442,10 @@ class DprRetriever(VisionRetriever):
             reranked_scores = self.rerank_provider.rerank(
                 self.query_texts[query_idx],
                 documents_to_rerank,
-                combined_ordinals,
-                list_emb_documents
+                combined_ordinals
             )
 
-            final_scores.append([reranked_scores[doc_id] for doc_id in list_emb_documents])
+            final_scores.append([reranked_scores.get(doc_id, 0.0) for doc_id in range(len(list_emb_documents))])
 
         return torch.tensor(final_scores)
 

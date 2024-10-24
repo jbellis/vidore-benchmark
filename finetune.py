@@ -5,7 +5,7 @@ import random
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoConfig
 from tqdm import tqdm
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
@@ -75,6 +75,7 @@ def train(model, train_dataloader, epochs: int, device: str):
 
     # Calculate initial loss
     model.eval()
+    torch.cuda.empty_cache()  # Clear GPU memory before starting
     initial_loss = 0.0
     with torch.no_grad():
         for batch in tqdm(train_dataloader, desc="Calculating initial loss"):
@@ -127,7 +128,7 @@ def train(model, train_dataloader, epochs: int, device: str):
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
     parser.add_argument("--num-files", type=int, default=1000, help="Number of files to use for training")
-    parser.add_argument("--batch-size", type=int, default=4, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=3, help="Number of epochs for training")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training")
     args = parser.parse_args()
@@ -136,8 +137,11 @@ def main():
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
 
     tokenizer = AutoTokenizer.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
-    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
+    config = AutoConfig.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
+    config.use_cache = False  # This is important for gradient checkpointing
+    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', config=config, trust_remote_code=True)
     model.to(args.device)  # Move the model to the specified device
+    model.gradient_checkpointing_enable()  # Enable gradient checkpointing
 
     dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.num_files, tokenizer)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)

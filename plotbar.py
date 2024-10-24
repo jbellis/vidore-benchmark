@@ -3,6 +3,7 @@ import json
 import glob
 import random
 import matplotlib.pyplot as plt
+import re
 
 # Define a color palette with slightly more saturated colors for some models
 MODEL_COLORS = {
@@ -30,6 +31,9 @@ def read_ndcg_value(file_path):
         data = json.load(f)
     key = list(data.keys())[0]
     return data[key]['ndcg_at_5']
+
+def process_dataset_name(dataset):
+    return re.sub(r'_test.*$', '', dataset)
 
 def main():
     output_dir = 'outputs-dpr'
@@ -72,7 +76,8 @@ def main():
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Model')
     ax.set_xticks([xi + (len(models) - 1) * width / 2 for xi in x])  # Adjusted to center x-axis labels
-    ax.set_xticklabels(datasets, rotation=45, ha='right')
+    processed_datasets = [process_dataset_name(dataset) for dataset in datasets]
+    ax.set_xticklabels(processed_datasets, rotation=0, ha='center')
     ax.legend()
 
     plt.tight_layout()

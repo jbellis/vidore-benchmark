@@ -50,6 +50,9 @@ def process_arxivqa_line(data, ocr_provider, test_files):
     with Image.open(image_path) as img:
         # Perform OCR
         ocr_text = ocr_provider.ocr(img, sha256_hash)
+        if ocr_text is None:
+            print('No text extracted for ', image_path)
+            return
         
         # Write OCR text to file in the OCR directory
         with open(ocr_file_path, "w") as f:

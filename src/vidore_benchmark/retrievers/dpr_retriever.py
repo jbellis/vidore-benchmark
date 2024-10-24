@@ -220,23 +220,13 @@ class DprRetriever(VisionRetriever):
 
         if self.mode == 'reranked':
             if self.reranker == 'cohere':
-                cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
-                self.rerank_provider = CohereRerankProvider(cohere_client)
+                self.rerank_provider = CohereRerankProvider()
             elif self.reranker == 'jina':
-                jina_model = AutoModelForSequenceClassification.from_pretrained(
-                    'jinaai/jina-reranker-v2-base-multilingual',
-                    torch_dtype="auto",
-                    trust_remote_code=True,
-                )
-                jina_model.to(self.device)
-                jina_model.eval()
-                self.rerank_provider = JinaRerankProvider(jina_model)
+                self.rerank_provider = JinaRerankProvider(self.device)
             elif self.reranker == 'voyage' or self.reranker == 'voyage-lite':
-                voyage_client = voyageai.Client(api_key=os.environ.get('VOYAGE_API_KEY'))
-                self.rerank_provider = VoyageRerankProvider(voyage_client)
+                self.rerank_provider = VoyageRerankProvider()
             elif self.reranker == 'bge':
-                bge_reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
-                self.rerank_provider = BGERerankProvider(bge_reranker)
+                self.rerank_provider = BGERerankProvider()
             elif self.reranker == 'rrf':
                 self.rerank_provider = RRFRerankProvider()
             else:

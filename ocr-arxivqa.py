@@ -68,7 +68,8 @@ def main():
     os.makedirs(ocr_dir, exist_ok=True)
 
     with open(preprocessed_file, 'r') as file:
-        for line in tqdm(file, desc="Processing ArXivQA lines"):
+        lines = file.readlines()
+        for line in tqdm(lines, desc="Processing ArXivQA images"):
             data = json.loads(line.strip())
             process_arxivqa_line(data, ocr_provider, test_files)
 

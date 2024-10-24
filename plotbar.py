@@ -4,15 +4,15 @@ import glob
 import random
 import matplotlib.pyplot as plt
 
-# Define a color palette
+# Define a color palette with slightly more saturated colors for some models
 MODEL_COLORS = {
-    'stella': '#1f77b4',  # blue
-    'gemini_004': '#ff7f0e',  # orange
-    'openai_v3_small': '#65ff3d',  # light green (50% more saturated)
-    'openai_v3_large': '#2ca02c',  # green
-    'bge_m3': '#9467bd',  # purple
-    'bm25': '#8c564b',  # brown
-    'gte_large': '#e377c2',  # pink
+    'stella': '#a6cee3',  # light blue
+    'gemini_004': '#fdbf6f',  # light orange
+    'openai_v3_small': '#95d679',  # slightly more saturated light green
+    'openai_v3_large': '#33a02c',  # darker green
+    'bge_m3': '#b894c2',  # slightly more saturated light purple
+    'bm25': '#b15928',  # brown
+    'gte_large': '#f98080',  # slightly more saturated light pink
 }
 
 def extract_dataset_and_model(filename):

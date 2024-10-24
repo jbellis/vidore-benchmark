@@ -21,8 +21,6 @@ from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
 from google.api_core.exceptions import InternalServerError
-from llama_index.core import SimpleDirectoryReader
-from llama_parse import LlamaParse
 from more_itertools import chunked
 from nltk import word_tokenize
 from nltk.corpus import stopwords
@@ -30,13 +28,13 @@ from openai import OpenAI
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-from unstructured_client.models import shared
 from transformers import AutoModelForSequenceClassification
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
+from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, Qwen2OcrProvider
 
 """
 This module uses the following environment variables:
@@ -181,7 +179,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
 @register_vision_retriever("dpr")
 class DprRetriever(VisionRetriever):
     """
-    DprSherpaRetriever class to retrieve embeddings using a DPR embeddings model with llm_sherpa
+    DprRetriever class to retrieve embeddings using a DPR embeddings model with llm_sherpa
     chunking the images.
     """
 
@@ -236,31 +234,20 @@ class DprRetriever(VisionRetriever):
 
         self.ocr_source = os.environ.get('VIDORE_OCR')
         valid_ocr_sources = ['flash', 'unstructured', 'llamaparse', 'idefics2', 'qwen2']
-        if self.ocr_source not in valid_ocr_sources:
+        if self.ocr_source == 'flash':
+            self.ocr_provider = GeminiOcrProvider()
+        elif self.ocr_source == 'unstructured':
+            self.ocr_provider = UnstructuredOcrProvider()
+        elif self.ocr_source == 'llamaparse':
+            self.ocr_provider = LlamaOcrProvider()
+        elif self.ocr_source == 'idefics2':
+            self.ocr_provider = Idefics2OcrProvider(self.device)
+        elif self.ocr_source == 'qwen2':
+            self.ocr_provider = Qwen2OcrProvider(self.device)
+        else:
             raise ValueError(f"Invalid OCR source: {self.ocr_source}. Valid sources: {valid_ocr_sources}")
 
         self.document_cache_dir = os.path.join(os.getcwd(), f'document_cache_{self.ocr_source}')
-
-        if self.ocr_source == 'idefics2':
-            self.idefics2_processor = AutoProcessor.from_pretrained("HuggingFaceM4/idefics2-8b")
-            quantization_config = AwqConfig(
-                bits=4,
-                fuse_max_seq_len=4096,
-                modules_to_fuse={
-                    "attention": ["q_proj", "k_proj", "v_proj", "o_proj"],
-                    "mlp": ["gate_proj", "up_proj", "down_proj"],
-                    "layernorm": ["input_layernorm", "post_attention_layernorm", "norm"],
-                    "use_alibi": False,
-                    "num_attention_heads": 32,
-                    "num_key_value_heads": 8,
-                    "hidden_size": 4096,
-                }
-            )
-            self.idefics2_model = AutoModelForVision2Seq.from_pretrained(
-                "HuggingFaceM4/idefics2-8b-AWQ",
-                torch_dtype=torch.float16,
-                quantization_config=quantization_config,
-            ).to(self.device)
 
     def use_dataset(self, ds):
         if 'synthetic' in ds.name:
@@ -368,19 +355,8 @@ class DprRetriever(VisionRetriever):
                     extracted_text = f.read()
                 logger.info(f"Loaded cached text for document {doc_hash}")
             else:
-                # Extract text from the image using Gemini Flash
-                if self.ocr_source == 'flash':
-                    f = self.ocr_gemini
-                elif self.ocr_source == 'unstructured':
-                    f = self.ocr_unstructured
-                elif self.ocr_source == 'llamaparse':
-                    f = self.ocr_llama
-                elif self.ocr_source == 'idefics2':
-                    f = self.ocr_idefics2
-                else:
-                    assert self.ocr_source == 'qwen2'
-                    f = self.ocr_qwen2
-                extracted_text = f(doc_image, doc_hash)
+                # Extract text from the image using the OCR provider
+                extracted_text = self.ocr_provider.ocr(doc_image, doc_hash)
                 if extracted_text is not None:
                     with open(cache_file, 'w', encoding='utf-8') as f:
                         f.write(extracted_text)
@@ -410,144 +386,6 @@ class DprRetriever(VisionRetriever):
                 future.result()
 
         return document_hashes
-
-    def ocr_gemini(self, doc_image: Image.Image, doc_hash: str) -> str | None:
-        try:
-            return self._ocr_gemini_once(doc_image)
-        except ValueError as e:
-            if 'encoding error' in str(e):
-                # Cut the image resolution in half and try again
-                doc_image = doc_image.resize((doc_image.width // 2, doc_image.height // 2))
-                logger.info(f"Encoding error occurred. Retrying with reduced resolution: {doc_image.size}")
-                try:
-                    return self._ocr_gemini_once(doc_image)
-                except ValueError as e:
-                    print(f"Encoding failed even at reduced resolution: {doc_image.size}")
-            elif 'copyright' in str(e):
-                print(f"Copyright error for document {doc_hash}")
-            else:
-                print(f"Encoding error for document {doc_hash}: {str(e)}")
-        except InternalServerError:
-            print(f"Internal server error for document {doc_hash}")
-        return None
-
-    def _ocr_gemini_once(self, doc_image):
-        response = self.gemini_model.generate_content(
-            [
-                "Extract all the text from this image, preserving structure as much as possible.",
-                doc_image
-            ],
-            generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048, )
-        )
-        return response.text
-
-    def ocr_llama(self, doc_image: Image.Image, doc_hash: str) -> str:
-        global llama_parser
-        if not llama_parser:
-            llama_parser = LlamaParse(api_key=os.environ.get('LLAMA_CLOUD_API_KEY'),
-                                      result_type="markdown")
-
-        filename = "/tmp/ocr_llama.png"
-        doc_image.save(filename)
-
-        file_extractor = {".png": llama_parser}
-        L = SimpleDirectoryReader(input_files=[filename], file_extractor=file_extractor).load_data()
-        if not L:
-            print(f"No text extracted from {doc_hash}")
-            return None
-        return L[0].get_content()
-
-    def ocr_unstructured(self, doc_image: Image.Image, doc_hash: str) -> str:
-        global u_client
-        if not u_client:
-            u_client = unstructured_client.UnstructuredClient(api_key_auth=os.getenv("UNSTRUCTURED_API_KEY"),
-                                                              server_url=os.getenv("UNSTRUCTURED_API_URL"))
-
-        filename = "/tmp/ocr_unstructured.png"
-        doc_image.save(filename)
-        if 'tabfquad' in self.current_dataset_name or 'shift' in self.current_dataset_name:
-            language = 'fr'
-        else:
-            language = 'eng'
-        req = {
-            "partition_parameters": {
-                "files": {
-                    "content": open(filename, "rb"),
-                    "file_name": filename,
-                },
-                "strategy": shared.Strategy.HI_RES,
-                "languages": [language],
-            }
-        }
-        res = u_client.general.partition(request=req)
-        return '\n\n'.join(e['text'] for e in res.elements)
-
-    def ocr_idefics2(self, doc_image: Image.Image, doc_hash: str) -> str:
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text",
-                     "text": "Extract all the text from this image, preserving structure as much as possible."},
-                ]
-            }
-        ]
-        prompt = self.idefics2_processor.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = self.idefics2_processor(text=prompt, images=[doc_image], return_tensors="pt")
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-        with torch.no_grad():
-            generated_ids = self.idefics2_model.generate(**inputs, max_new_tokens=500)
-        generated_text = self.idefics2_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-        return generated_text
-
-    def ocr_qwen2(self, doc_image: Image.Image, doc_hash: str) -> str:
-        if not hasattr(self, 'qwen2_model'):
-            quantization_config = AwqConfig(bits=4, group_size=128, zero_point=True, modules_to_not_convert=["lm_head"])
-            self.qwen2_model = Qwen2VLForConditionalGeneration.from_pretrained(
-                "Qwen/Qwen2-VL-7B-Instruct-AWQ", torch_dtype="auto", device_map="auto"
-            )
-            self.qwen2_processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct-AWQ")
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image",
-                     "image": doc_image},
-                    {"type": "text",
-                     "text": "Extract all the text from this image, preserving structure as much as possible."},
-                ],
-            }
-        ]
-
-        # Preparation for inference
-        text = self.qwen2_processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = self.qwen2_processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-        inputs = inputs.to(self.device)
-
-        # Inference: Generation of the output
-        with torch.no_grad():
-            generated_ids = self.qwen2_model.generate(**inputs, max_new_tokens=2048)
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_text = self.qwen2_processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )[0]
-
-        return output_text
 
     def get_scores(
             self,

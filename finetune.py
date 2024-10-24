@@ -7,10 +7,9 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
-GRADIENT_ACCUMULATION_STEPS = 4
+GRADIENT_ACCUMULATION_STEPS = 4  # Simulate 4x larger batch size
 SEQUENCE_LENGTH = 512
 
 class ArxivQADataset(Dataset):
@@ -73,19 +72,24 @@ def train(model, train_dataloader, epochs: int, device: str):
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
     loss_fn = torch.nn.TripletMarginLoss(margin=1.0)
-    scaler = GradScaler()
 
     # Calculate initial loss
     model.eval()
     initial_loss = 0.0
     with torch.no_grad():
         for batch in tqdm(train_dataloader, desc="Calculating initial loss"):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            with autocast():
-                question_embeddings = model(input_ids=batch['question_input_ids'], attention_mask=batch['question_attention_mask']).last_hidden_state[:, 0, :]
-                positive_ocr_embeddings = model(input_ids=batch['positive_ocr_input_ids'], attention_mask=batch['positive_ocr_attention_mask']).last_hidden_state[:, 0, :]
-                negative_ocr_embeddings = model(input_ids=batch['negative_ocr_input_ids'], attention_mask=batch['negative_ocr_attention_mask']).last_hidden_state[:, 0, :]
-                loss = loss_fn(question_embeddings, positive_ocr_embeddings, negative_ocr_embeddings)
+            question_input_ids = batch['question_input_ids'].to(device)
+            question_attention_mask = batch['question_attention_mask'].to(device)
+            positive_ocr_input_ids = batch['positive_ocr_input_ids'].to(device)
+            positive_ocr_attention_mask = batch['positive_ocr_attention_mask'].to(device)
+            negative_ocr_input_ids = batch['negative_ocr_input_ids'].to(device)
+            negative_ocr_attention_mask = batch['negative_ocr_attention_mask'].to(device)
+
+            question_embeddings = model(input_ids=question_input_ids, attention_mask=question_attention_mask).last_hidden_state[:, 0, :]
+            positive_ocr_embeddings = model(input_ids=positive_ocr_input_ids, attention_mask=positive_ocr_attention_mask).last_hidden_state[:, 0, :]
+            negative_ocr_embeddings = model(input_ids=negative_ocr_input_ids, attention_mask=negative_ocr_attention_mask).last_hidden_state[:, 0, :]
+
+            loss = loss_fn(question_embeddings, positive_ocr_embeddings, negative_ocr_embeddings)
             initial_loss += loss.item()
 
     initial_avg_loss = initial_loss / len(train_dataloader)
@@ -95,21 +99,26 @@ def train(model, train_dataloader, epochs: int, device: str):
         model.train()
         total_loss = 0.0
         for i, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{epochs}")):
-            batch = {k: v.to(device) for k, v in batch.items()}
+            question_input_ids = batch['question_input_ids'].to(device)
+            question_attention_mask = batch['question_attention_mask'].to(device)
+            positive_ocr_input_ids = batch['positive_ocr_input_ids'].to(device)
+            positive_ocr_attention_mask = batch['positive_ocr_attention_mask'].to(device)
+            negative_ocr_input_ids = batch['negative_ocr_input_ids'].to(device)
+            negative_ocr_attention_mask = batch['negative_ocr_attention_mask'].to(device)
+
+            question_embeddings = model(input_ids=question_input_ids, attention_mask=question_attention_mask).last_hidden_state[:, 0, :]
+            positive_ocr_embeddings = model(input_ids=positive_ocr_input_ids, attention_mask=positive_ocr_attention_mask).last_hidden_state[:, 0, :]
+            negative_ocr_embeddings = model(input_ids=negative_ocr_input_ids, attention_mask=negative_ocr_attention_mask).last_hidden_state[:, 0, :]
+
+            loss = loss_fn(question_embeddings, positive_ocr_embeddings, negative_ocr_embeddings)
             
-            with autocast():
-                question_embeddings = model(input_ids=batch['question_input_ids'], attention_mask=batch['question_attention_mask']).last_hidden_state[:, 0, :]
-                positive_ocr_embeddings = model(input_ids=batch['positive_ocr_input_ids'], attention_mask=batch['positive_ocr_attention_mask']).last_hidden_state[:, 0, :]
-                negative_ocr_embeddings = model(input_ids=batch['negative_ocr_input_ids'], attention_mask=batch['negative_ocr_attention_mask']).last_hidden_state[:, 0, :]
-                loss = loss_fn(question_embeddings, positive_ocr_embeddings, negative_ocr_embeddings)
+            loss = loss / GRADIENT_ACCUMULATION_STEPS  # Normalize the loss
+            loss.backward()
             
-            scaler.scale(loss).backward()
-            
-            total_loss += loss.item()
+            total_loss += loss.item() * GRADIENT_ACCUMULATION_STEPS
             
             if (i + 1) % GRADIENT_ACCUMULATION_STEPS == 0 or (i + 1) == len(train_dataloader):
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 optimizer.zero_grad()
 
         avg_loss = total_loss / len(train_dataloader)
@@ -118,8 +127,8 @@ def train(model, train_dataloader, epochs: int, device: str):
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
     parser.add_argument("--num-files", type=int, default=1000, help="Number of files to use for training")
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=6, help="Number of epochs for training")
+    parser.add_argument("--batch-size", type=int, default=4, help="Batch size for training")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs for training")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training")
     args = parser.parse_args()
 
@@ -131,7 +140,7 @@ def main():
     model.to(args.device)  # Move the model to the specified device
 
     dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.num_files, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
     # Train the model
     train(model, dataloader, args.epochs, args.device)

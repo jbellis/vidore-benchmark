@@ -4,6 +4,7 @@ import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModel
+from sentence_transformers import losses, SentenceTransformer
 from tqdm import tqdm
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
@@ -45,46 +46,68 @@ class ArxivQADataset(Dataset):
         question = self.questions[idx]
         ocr_text = self.ocr_texts[idx]
         
-        question_encoding = self.tokenizer(question, truncation=True, padding='max_length', max_length=128, return_tensors='pt')
-        ocr_encoding = self.tokenizer(ocr_text, truncation=True, padding='max_length', max_length=128, return_tensors='pt')
+        question_encoding = self.tokenizer(question, truncation=True, padding='max_length', max_length=512, return_tensors='pt')
+        ocr_encoding = self.tokenizer(ocr_text, truncation=True, padding='max_length', max_length=512, return_tensors='pt')
         
         return {
-            'question_input_ids': question_encoding['input_ids'].squeeze(),
-            'question_attention_mask': question_encoding['attention_mask'].squeeze(),
-            'ocr_input_ids': ocr_encoding['input_ids'].squeeze(),
-            'ocr_attention_mask': ocr_encoding['attention_mask'].squeeze(),
+            'question_input_ids': question_encoding['input_ids'].squeeze(0),
+            'question_attention_mask': question_encoding['attention_mask'].squeeze(0),
+            'ocr_input_ids': ocr_encoding['input_ids'].squeeze(0),
+            'ocr_attention_mask': ocr_encoding['attention_mask'].squeeze(0),
         }
 
 def train(model, train_dataloader, epochs: int, device: str):
     model.to(device)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
-    loss_fn = torch.nn.CosineEmbeddingLoss()
+    loss_fn = losses.MultipleNegativesRankingLoss(model)
 
     for epoch in range(epochs):
+        total_loss = 0
         for i, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{epochs}")):
-            question_input_ids = batch['question_input_ids'].to(device)
-            question_attention_mask = batch['question_attention_mask'].to(device)
-            ocr_input_ids = batch['ocr_input_ids'].to(device)
-            ocr_attention_mask = batch['ocr_attention_mask'].to(device)
+            question_features = {
+                'input_ids': batch['question_input_ids'].to(device),
+                'attention_mask': batch['question_attention_mask'].to(device)
+            }
+            ocr_features = {
+                'input_ids': batch['ocr_input_ids'].to(device),
+                'attention_mask': batch['ocr_attention_mask'].to(device)
+            }
 
-            question_embeddings = model(input_ids=question_input_ids, attention_mask=question_attention_mask).last_hidden_state[:, 0, :]
-            ocr_embeddings = model(input_ids=ocr_input_ids, attention_mask=ocr_attention_mask).last_hidden_state[:, 0, :]
+            print(f"Batch size: {len(batch['question_input_ids'])}")
+            print(f"Question input_ids shape: {question_features['input_ids'].shape}")
+            print(f"Question attention_mask shape: {question_features['attention_mask'].shape}")
+            print(f"OCR input_ids shape: {ocr_features['input_ids'].shape}")
+            print(f"OCR attention_mask shape: {ocr_features['attention_mask'].shape}")
 
-            target = torch.ones(question_embeddings.size(0)).to(device)
-            loss = loss_fn(question_embeddings, ocr_embeddings, target)
+            # Compute embeddings
+            question_embeddings = model(question_features)['sentence_embedding']
+            ocr_embeddings = model(ocr_features)['sentence_embedding']
+
+            # Combine embeddings
+            embeddings = torch.cat([question_embeddings, ocr_embeddings])
+
+            # Create labels (0 for questions, 1 for OCR texts)
+            labels = torch.arange(question_embeddings.size(0), device=device)
+
+            # Compute loss
+            loss = loss_fn(embeddings, labels)
             
+            total_loss += loss.item()
             loss = loss / GRADIENT_ACCUMULATION_STEPS  # Normalize the loss
             loss.backward()
             
             if (i + 1) % GRADIENT_ACCUMULATION_STEPS == 0 or (i + 1) == len(train_dataloader):
                 optimizer.step()
                 optimizer.zero_grad()
+        
+        avg_loss = total_loss / len(train_dataloader)
+        print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
-    parser.add_argument("--num_files", type=int, default=1000, help="Number of files to use for training")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--num-files", required=True, type=int, help="Number of files to use for training")
+    parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=3, help="Number of epochs for training")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training")
     args = parser.parse_args()
@@ -93,7 +116,7 @@ def main():
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
 
     tokenizer = AutoTokenizer.from_pretrained('Alibaba-NLP/gte-large-en-v1.5')
-    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5')
+    model = SentenceTransformer('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
 
     dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.num_files, tokenizer)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)

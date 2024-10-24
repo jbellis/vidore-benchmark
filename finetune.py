@@ -67,11 +67,17 @@ class ArxivQADataset(Dataset):
             'negative_ocr_attention_mask': negative_ocr_encoding['attention_mask'].squeeze(),
         }
 
-def evaluate(model, dataloader, device):
+
+def train(model, train_dataloader, epochs: int, device: str):
+    model.to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    loss_fn = torch.nn.TripletMarginLoss(margin=1.0)
+
+    # Calculate initial loss
     model.eval()
-    scores = []
+    initial_loss = 0.0
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
+        for batch in tqdm(train_dataloader, desc="Calculating initial loss"):
             question_input_ids = batch['question_input_ids'].to(device)
             question_attention_mask = batch['question_attention_mask'].to(device)
             positive_ocr_input_ids = batch['positive_ocr_input_ids'].to(device)
@@ -83,30 +89,11 @@ def evaluate(model, dataloader, device):
             positive_ocr_embeddings = model(input_ids=positive_ocr_input_ids, attention_mask=positive_ocr_attention_mask).last_hidden_state[:, 0, :]
             negative_ocr_embeddings = model(input_ids=negative_ocr_input_ids, attention_mask=negative_ocr_attention_mask).last_hidden_state[:, 0, :]
 
-            # Ensure all tensors are on the same device
-            question_embeddings = question_embeddings.to(device)
-            positive_ocr_embeddings = positive_ocr_embeddings.to(device)
-            negative_ocr_embeddings = negative_ocr_embeddings.to(device)
+            loss = loss_fn(question_embeddings, positive_ocr_embeddings, negative_ocr_embeddings)
+            initial_loss += loss.item()
 
-            positive_scores = torch.cosine_similarity(question_embeddings, positive_ocr_embeddings)
-            negative_scores = torch.cosine_similarity(question_embeddings, negative_ocr_embeddings)
-
-            batch_scores = positive_scores - negative_scores.mean(dim=0)
-            scores.extend(batch_scores.tolist())
-
-    scores_np = np.array(scores)
-    return {
-        "average": np.mean(scores_np),
-        "min": np.min(scores_np),
-        "max": np.max(scores_np),
-        "median": np.median(scores_np),
-        "std": np.std(scores_np)
-    }
-
-def train(model, train_dataloader, epochs: int, device: str):
-    model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
-    loss_fn = torch.nn.TripletMarginLoss(margin=1.0)
+    initial_avg_loss = initial_loss / len(train_dataloader)
+    print(f"Initial Average Loss: {initial_avg_loss:.4f}")
 
     for epoch in range(epochs):
         model.train()
@@ -137,15 +124,6 @@ def train(model, train_dataloader, epochs: int, device: str):
         avg_loss = total_loss / len(train_dataloader)
         print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
 
-        # Evaluate after each epoch
-        eval_results = evaluate(model, train_dataloader, device)
-        print(f"Evaluation after epoch {epoch + 1}:")
-        print(f"  Average Score: {eval_results['average']:.4f}")
-        print(f"  Min Score: {eval_results['min']:.4f}")
-        print(f"  Max Score: {eval_results['max']:.4f}")
-        print(f"  Median Score: {eval_results['median']:.4f}")
-        print(f"  Std Dev: {eval_results['std']:.4f}")
-
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
     parser.add_argument("--num-files", type=int, default=1000, help="Number of files to use for training")
@@ -157,21 +135,12 @@ def main():
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
 
-    tokenizer = AutoTokenizer.from_pretrained('Alibaba-NLP/gte-large-en-v1.5')
-    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5')
+    tokenizer = AutoTokenizer.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
+    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
     model.to(args.device)  # Move the model to the specified device
 
     dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.num_files, tokenizer)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-
-    # Evaluate before fine-tuning
-    print("Evaluating before fine-tuning:")
-    eval_results = evaluate(model, dataloader, args.device)
-    print(f"  Average Score: {eval_results['average']:.4f}")
-    print(f"  Min Score: {eval_results['min']:.4f}")
-    print(f"  Max Score: {eval_results['max']:.4f}")
-    print(f"  Median Score: {eval_results['median']:.4f}")
-    print(f"  Std Dev: {eval_results['std']:.4f}")
 
     # Train the model
     train(model, dataloader, args.epochs, args.device)
@@ -181,15 +150,6 @@ def main():
     model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
     print(f"Fine-tuned model saved to {output_path}")
-
-    # Final evaluation
-    print("Final evaluation after fine-tuning:")
-    eval_results = evaluate(model, dataloader, args.device)
-    print(f"  Average Score: {eval_results['average']:.4f}")
-    print(f"  Min Score: {eval_results['min']:.4f}")
-    print(f"  Max Score: {eval_results['max']:.4f}")
-    print(f"  Median Score: {eval_results['median']:.4f}")
-    print(f"  Std Dev: {eval_results['std']:.4f}")
 
 if __name__ == "__main__":
     main()

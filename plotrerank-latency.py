@@ -2,14 +2,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Data
-models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge']
+models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge_3090', 'bge_cpu']
 times = {
     'rrf': 21,
     'jina': 230,
     'cohere': 90,
     'voyage': 311,
     'voyage-lite': 240,
-    'bge': 115
+    'bge_3090': 115,
+    'bge_cpu': 245
 }
 
 # Calculate speeds
@@ -24,7 +25,8 @@ colors = {
     'cohere': '#1f77b4',   # blue
     'voyage': '#8c564b',   # brown
     'voyage-lite': '#e377c2',  # pink
-    'bge': '#2ca02c'       # green
+    'bge_3090': '#2ca02c',     # green
+    'bge_cpu': '#006400'       # dark green
 }
 
 # Create the plot
@@ -47,7 +49,7 @@ plt.xticks(y_pos, models, rotation=45)
 for bar in bars:
     height = bar.get_height()
     plt.text(bar.get_x() + bar.get_width()/2., height,
-             f'{height:.3f}s',
+             f'{height:.2g}s',
              ha='center', va='bottom')
 
 # Adjust layout to prevent label cutoff

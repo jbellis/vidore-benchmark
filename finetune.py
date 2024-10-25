@@ -141,17 +141,18 @@ def main():
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, default=100, help="Number of files to use for validation")
     parser.add_argument("--batch-size", type=int, default=7, help="Batch size for training")
-    parser.add_argument("--patience", type=int, default=3, help="Number of epochs with no improvement after which training will be stopped")
+    parser.add_argument("--patience", type=int, default=5, help="Number of epochs with no improvement after which training will be stopped")
     parser.add_argument("--max-epochs", type=int, default=100, help="Maximum number of epochs to train")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training")
     parser.add_argument("--skip-validations", type=int, default=3, help="Number of initial epochs to skip validation")
+    parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     args = parser.parse_args()
 
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
 
-    tokenizer = AutoTokenizer.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
-    model = AutoModel.from_pretrained('Alibaba-NLP/gte-large-en-v1.5', trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
 
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files, tokenizer)
@@ -163,7 +164,8 @@ def main():
     model = train(model, train_dataloader, val_dataloader, args.device, args.patience, args.max_epochs, args.skip_validations)
 
     # Save the fine-tuned model
-    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_gte_large_{args.train_files}')
+    model_name = args.model.split('/')[-1]  # Extract just the model name from the path
+    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')
     model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
     print(f"Fine-tuned model saved to {output_path}")

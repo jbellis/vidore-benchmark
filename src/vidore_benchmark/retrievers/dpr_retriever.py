@@ -170,10 +170,11 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         with torch.no_grad():
             output = BGE_M3_MODEL.encode(texts, max_length=512)["dense_vecs"]
         return output.tolist()
-    elif provider.startswith('gte-large'):
+    elif provider.startswith('gte-large-'):
         global GTE_MODEL, GTE_TOKENIZER
         if GTE_MODEL is None or GTE_TOKENIZER is None:
-            model_path = 'Alibaba-NLP/gte-large-en-v1.5'
+            model_num = provider.split('-')[-1]
+            model_path = f'/home/jonathan/datasets/arxivqa/fine_tuned_gte_large_{model_num}'
             GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
             GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
         
@@ -204,9 +205,12 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'gte-large', 'best']
-        if self.embeddings_model not in valid_models:
-            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Valid models: {valid_models}")
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'best']
+        # Allow any gte-large-N model
+        if self.embeddings_model.startswith('gte-large-') and self.embeddings_model[10:].isdigit():
+            pass  # Valid gte-large-N model
+        elif self.embeddings_model not in valid_models:
+            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-N where N is a number")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None  # initialized by use_dataset
         self.mode = os.environ.get('VIDORE_SCORE_MODE')
@@ -288,7 +292,7 @@ class DprRetriever(VisionRetriever):
             dim = 1024
         elif self.embeddings_model == 'bge-m3':
             dim = 1024
-        elif self.embeddings_model == 'gte-large':
+        elif self.embeddings_model.startswith('gte-large-'):
             dim = 1024
         else:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")

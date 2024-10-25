@@ -60,6 +60,11 @@ def process_arxivqa_line(data, ocr_provider, test_files):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--files", type=int, help="Stop after processing N files successfully")
+    args = parser.parse_args()
+
     raw_file = os.path.join(DATASET_LOCATION, 'arxivqa.jsonl')
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
     # preprocess(raw_file, preprocessed_file)
@@ -70,11 +75,24 @@ def main():
     ocr_dir = path.join(DATASET_LOCATION, 'ocr')
     os.makedirs(ocr_dir, exist_ok=True)
 
+    processed_count = 0
     with open(preprocessed_file, 'r') as file:
         lines = file.readlines()
         for line in tqdm(lines, desc="Processing ArXivQA images"):
             data = json.loads(line.strip())
+            
+            # Get the OCR file path to check if OCR succeeded
+            sha256_hash = data['image_hash']
+            ocr_file_path = path.join(ocr_dir, f"{sha256_hash}.txt")
+            
             process_arxivqa_line(data, ocr_provider, test_files)
+            
+            # Only increment counter if OCR file exists (meaning OCR succeeded)
+            if path.exists(ocr_file_path):
+                processed_count += 1
+                if args.files and processed_count >= args.files:
+                    print(f"\nStopping after {processed_count} successful OCR files")
+                    break
 
 if __name__ == "__main__":
     main()

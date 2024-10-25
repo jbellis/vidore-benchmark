@@ -18,7 +18,6 @@ torch.set_float32_matmul_precision('medium')
 
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
-GRADIENT_ACCUMULATION_STEPS = 8  # Simulate 4x larger batch size
 SEQUENCE_LENGTH = 512
 
 
@@ -89,6 +88,7 @@ def main():
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before early stopping")
+    parser.add_argument("--gradient", type=int, default=8, help="Gradient accumulation steps to simulate larger batch size")
     args = parser.parse_args()
 
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
@@ -136,7 +136,7 @@ def main():
         save_strategy="epoch",
         load_best_model_at_end=True,
         fp16=True,
-        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+        gradient_accumulation_steps=args.gradient,
         label_names = ["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
     )
 

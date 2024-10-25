@@ -80,7 +80,6 @@ class ArxivQADataset(Dataset):
             'negative_mask': negative_ocr_encoding['attention_mask'].squeeze(),
         }
 
-
 class TripletCollator:
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -88,7 +87,7 @@ class TripletCollator:
 
     def __call__(self, features):
         batch = {}
-
+        
         # Pad and create tensor for each key
         for key in ['input_ids', 'attention_mask', 'positive_ids', 'positive_mask', 'negative_ids', 'negative_mask']:
             if key in features[0]:
@@ -97,7 +96,7 @@ class TripletCollator:
                     batch_first=True,
                     padding_value=self.pad_token_id if 'ids' in key else 0
                 )
-
+        
         return batch
 
 
@@ -117,7 +116,6 @@ def main():
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-
     class TripletModel(torch.nn.Module):
         def __init__(self, base_model):
             super().__init__()
@@ -127,14 +125,12 @@ def main():
         def forward(self, input_ids, attention_mask, positive_ids, positive_mask, negative_ids, negative_mask):
             # Get embeddings for each input
             query_emb = self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
-            positive_emb = self.base_model(input_ids=positive_ids, attention_mask=positive_mask).last_hidden_state[:, 0,
-                           :]
-            negative_emb = self.base_model(input_ids=negative_ids, attention_mask=negative_mask).last_hidden_state[:, 0,
-                           :]
-
+            positive_emb = self.base_model(input_ids=positive_ids, attention_mask=positive_mask).last_hidden_state[:, 0, :]
+            negative_emb = self.base_model(input_ids=negative_ids, attention_mask=negative_mask).last_hidden_state[:, 0, :]
+            
             # Compute triplet loss
             loss = self.loss_fn(query_emb, positive_emb, negative_emb)
-
+            
             return {"loss": loss, "logits": query_emb}
 
         def get_embedding(self, input_ids, attention_mask):
@@ -142,12 +138,7 @@ def main():
 
     base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
     model = TripletModel(base_model)
-
-    if args.find_learn_rate:
-        args.train_files = args.train_files // 10
-        args.val_files = args.val_files // 10
-        args.num_epochs = 1
-
+    
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files,
                                  tokenizer)
@@ -161,14 +152,15 @@ def main():
         weight_decay=0.01,
         logging_dir='./training-logs',
         logging_steps=10,
-        evaluation_strategy="no" if args.find_learn_rate else "epoch",
-        save_strategy="no" if args.find_learn_rate else "epoch",
-        load_best_model_at_end=not args.find_learn_rate,
+        evaluation_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
         greater_is_better=False,
         fp16=True,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
+        label_names = ["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
     )
+
 
     trainer = Trainer(
         model=model,
@@ -187,12 +179,12 @@ def main():
             def __init__(self):
                 self.learning_rates = []
                 self.losses = []
-
-            def on_log(self, args, state, control, logs=None, **kwargs):
-                if logs is not None and "loss" in logs and hasattr(state, 'trial') and state.trial is not None:
+                
+            def on_evaluate(self, args, state, control, metrics, **kwargs):
+                if hasattr(state, 'trial') and state.trial is not None:
                     self.learning_rates.append(state.trial.params['learning_rate'])
-                    self.losses.append(logs["loss"])
-
+                    self.losses.append(metrics['eval_loss'])
+                
             def plot_loss(self):
                 plt.figure(figsize=(10, 6))
                 plt.semilogx(self.learning_rates, self.losses)
@@ -204,31 +196,31 @@ def main():
                 plt.close()
 
         lr_finder_callback = LRFinderCallback()
-
+        
         def hp_space(trial):
             return {
                 "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True),
             }
-
+        
         trainer.model_init = model_init
         trainer.add_callback(lr_finder_callback)
-
+        
         best_run = trainer.hyperparameter_search(
             direction="minimize",
             hp_space=hp_space,
             n_trials=20,
         )
-
+        
         # Plot and save the learning rate finder curve
         lr_finder_callback.plot_loss()
-
+        
         print(f"Best learning rate found: {best_run.hyperparameters['learning_rate']}")
         print(f"Learning rate finder plot saved as lr_finder.png")
         return
 
     # Train the model
     trainer.train()
-
+    
     # Save the fine-tuned model
     model_name = args.model.split('/')[-1]
     output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')

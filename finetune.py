@@ -4,7 +4,12 @@ import os
 import random
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+from torch.optim import AdamW
+from typing import Dict
+import optuna
 from torch.utils.data import Dataset
+from transformers import TrainerCallback
 from transformers import (
     AutoTokenizer,
     AutoModel,
@@ -75,8 +80,29 @@ class ArxivQADataset(Dataset):
             'negative_mask': negative_ocr_encoding['attention_mask'].squeeze(),
         }
 
+class TripletCollator:
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.pad_token_id = tokenizer.pad_token_id
+
+    def __call__(self, features):
+        batch = {}
+        
+        # Pad and create tensor for each key
+        for key in ['input_ids', 'attention_mask', 'positive_ids', 'positive_mask', 'negative_ids', 'negative_mask']:
+            if key in features[0]:
+                batch[key] = torch.nn.utils.rnn.pad_sequence(
+                    [f[key] for f in features],
+                    batch_first=True,
+                    padding_value=self.pad_token_id if 'ids' in key else 0
+                )
+        
+        return batch
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
+    parser.add_argument("--find-learn-rate", action="store_true", help="Run learning rate finder")
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, default=100, help="Number of files to use for validation")
     parser.add_argument("--batch-size", type=int, default=7, help="Batch size for training")
@@ -135,24 +161,6 @@ def main():
         label_names = ["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
     )
 
-    class TripletCollator:
-        def __init__(self, tokenizer):
-            self.tokenizer = tokenizer
-            self.pad_token_id = tokenizer.pad_token_id
-
-        def __call__(self, features):
-            batch = {}
-            
-            # Pad and create tensor for each key
-            for key in ['input_ids', 'attention_mask', 'positive_ids', 'positive_mask', 'negative_ids', 'negative_mask']:
-                if key in features[0]:
-                    batch[key] = torch.nn.utils.rnn.pad_sequence(
-                        [f[key] for f in features],
-                        batch_first=True,
-                        padding_value=self.pad_token_id if 'ids' in key else 0
-                    )
-            
-            return batch
 
     trainer = Trainer(
         model=model,
@@ -162,9 +170,57 @@ def main():
         data_collator=TripletCollator(tokenizer),
     )
 
+    def model_init():
+        base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
+        return TripletModel(base_model)
+
+    if args.find_learn_rate:
+        class LRFinderCallback(TrainerCallback):
+            def __init__(self):
+                self.learning_rates = []
+                self.losses = []
+                
+            def on_evaluate(self, args, state, control, metrics, **kwargs):
+                if hasattr(state, 'trial') and state.trial is not None:
+                    self.learning_rates.append(state.trial.params['learning_rate'])
+                    self.losses.append(metrics['eval_loss'])
+                
+            def plot_loss(self):
+                plt.figure(figsize=(10, 6))
+                plt.semilogx(self.learning_rates, self.losses)
+                plt.xlabel('Learning Rate')
+                plt.ylabel('Loss')
+                plt.title('Learning Rate vs Loss')
+                plt.grid(True)
+                plt.savefig('lr_finder.png')
+                plt.close()
+
+        lr_finder_callback = LRFinderCallback()
+        
+        def hp_space(trial):
+            return {
+                "learning_rate": trial.suggest_float("learning_rate", 1e-6, 1e-3, log=True),
+            }
+        
+        trainer.model_init = model_init
+        trainer.add_callback(lr_finder_callback)
+        
+        best_run = trainer.hyperparameter_search(
+            direction="minimize",
+            hp_space=hp_space,
+            n_trials=20,
+        )
+        
+        # Plot and save the learning rate finder curve
+        lr_finder_callback.plot_loss()
+        
+        print(f"Best learning rate found: {best_run.hyperparameters['learning_rate']}")
+        print(f"Learning rate finder plot saved as lr_finder.png")
+        return
+
     # Train the model
     trainer.train()
-
+    
     # Save the fine-tuned model
     model_name = args.model.split('/')[-1]
     output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')

@@ -116,6 +116,7 @@ def main():
             return self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
 
     base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
+    base_model = torch.compile(base_model)
     model = TripletModel(base_model)
     
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)

@@ -10,8 +10,12 @@ from transformers import (
     AutoModel,
     Trainer,
     TrainingArguments,
-    DataCollatorWithPadding
+    DataCollatorWithPadding,
+    EarlyStoppingCallback
 )
+
+torch.set_float32_matmul_precision('medium')
+
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
 GRADIENT_ACCUMULATION_STEPS = 8  # Simulate 4x larger batch size
@@ -84,6 +88,7 @@ def main():
     parser.add_argument("--num-epochs", type=int, default=100, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
+    parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before early stopping")
     args = parser.parse_args()
 
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
@@ -124,12 +129,12 @@ def main():
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         weight_decay=0.01,
+        warmup_ratio=0.1,
         logging_dir='./training-logs',
         logging_steps=10,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        greater_is_better=False,
         fp16=True,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
         label_names = ["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
@@ -160,6 +165,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=TripletCollator(tokenizer),
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 
     # Train the model

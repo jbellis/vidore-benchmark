@@ -303,7 +303,7 @@ class DprRetriever(VisionRetriever):
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
-        ocr_fragment = '' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
+        ocr_fragment = 'flash2' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
         return ''.join(
             [c if c.isalnum() else '_' for c in (f'{dataset_name}{ocr_fragment}_{self.embeddings_model}').lower()])
 

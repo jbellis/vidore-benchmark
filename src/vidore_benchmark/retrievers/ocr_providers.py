@@ -42,8 +42,8 @@ class GeminiOcrProvider(OcrProvider):
     def _ocr_gemini_once(self, doc_image):
         response = self.gemini_model.generate_content(
             [
-                "Extract all the text from this image, preserving structure as much as possible.",
-                doc_image
+               "Extract all the text from this image and explain the non-textual elements, preserving structure as much as possible.",
+               doc_image
             ],
             generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048)
         )
@@ -154,7 +154,7 @@ class Qwen2OcrProvider(OcrProvider):
                     {"type": "image",
                      "image": doc_image},
                     {"type": "text",
-                     "text": "Extract all the text from this image, preserving structure as much as possible."},
+                     "text": "Extract all the text from this image and explain the non-textual elements, preserving structure as much as possible."},
                 ],
             }
         ]

@@ -174,7 +174,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         global GTE_MODEL, GTE_TOKENIZER
         if GTE_MODEL is None or GTE_TOKENIZER is None:
             model_num = provider.split('-')[-1]
-            model_path = f'/home/jonathan/datasets/arxivqa/fine_tuned_gte_large_{model_num}'
+            model_path = f'/home/jonathan/datasets/arxivqa/fine_tuned_gte-large-en-v1.5_{model_num}'
             GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
             GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
         

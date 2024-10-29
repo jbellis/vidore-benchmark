@@ -22,10 +22,10 @@ SEQUENCE_LENGTH = 512
 
 class ArxivQADataset(Dataset):
     def __init__(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int, tokenizer):
-        self.questions = []
-        self.positive_ocr_texts = []
-        self.all_ocr_texts = []
         self.tokenizer = tokenizer
+        self.encoded_questions = []
+        self.encoded_positive_texts = []
+        self.encoded_all_texts = []
         self.load_data(preprocessed_file, ocr_dir, start_file, end_file)
 
     def load_data(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int):
@@ -40,43 +40,59 @@ class ArxivQADataset(Dataset):
             file_hash = os.path.splitext(filename)[0]
             with open(os.path.join(ocr_dir, filename), 'r') as f:
                 ocr_text = f.read().strip()
-            self.all_ocr_texts.append(ocr_text)
+            # Pre-tokenize the OCR text
+            encoded_ocr = self.tokenizer(
+                ocr_text,
+                truncation=True,
+                padding='max_length',
+                max_length=SEQUENCE_LENGTH,
+                return_tensors='pt'
+            )
+            self.encoded_all_texts.append({
+                'input_ids': encoded_ocr['input_ids'][0],
+                'attention_mask': encoded_ocr['attention_mask'][0]
+            })
 
             if file_hash in hash_to_question:
                 question = hash_to_question[file_hash]
-                self.questions.append(question)
-                self.positive_ocr_texts.append(ocr_text)
+                # Pre-tokenize the question
+                encoded_q = self.tokenizer(
+                    question,
+                    truncation=True,
+                    padding='max_length',
+                    max_length=SEQUENCE_LENGTH,
+                    return_tensors='pt'
+                )
+                self.encoded_questions.append({
+                    'input_ids': encoded_q['input_ids'][0],
+                    'attention_mask': encoded_q['attention_mask'][0]
+                })
+                self.encoded_positive_texts.append({
+                    'input_ids': encoded_ocr['input_ids'][0],
+                    'attention_mask': encoded_ocr['attention_mask'][0]
+                })
 
     def __len__(self):
-        return len(self.questions)
+        return len(self.encoded_questions)
 
     def __getitem__(self, idx):
-        question = self.questions[idx]
-        positive_ocr_text = self.positive_ocr_texts[idx]
+        # Get pre-tokenized question and positive text
+        question = self.encoded_questions[idx]
+        positive = self.encoded_positive_texts[idx]
 
-        # Randomly select a negative example that's different from the positive one
+        # Randomly select a negative example
         negative_idx = idx
         while negative_idx == idx:
-            negative_idx = random.randint(0, len(self.all_ocr_texts) - 1)
-        negative_ocr_text = self.all_ocr_texts[negative_idx]
+            negative_idx = random.randint(0, len(self.encoded_all_texts) - 1)
+        negative = self.encoded_all_texts[negative_idx]
 
-        # Batch encode all texts together to reduce overhead
-        encodings = self.tokenizer(
-            [question, positive_ocr_text, negative_ocr_text],
-            truncation=True,
-            padding='max_length',
-            max_length=SEQUENCE_LENGTH,
-            return_tensors='pt'
-        )
-
-        # Format expected by Trainer
         return {
-            'input_ids': encodings['input_ids'][0],  # Question
-            'attention_mask': encodings['attention_mask'][0],
-            'positive_ids': encodings['input_ids'][1],  # Positive
-            'positive_mask': encodings['attention_mask'][1],
-            'negative_ids': encodings['input_ids'][2],  # Negative
-            'negative_mask': encodings['attention_mask'][2],
+            'input_ids': question['input_ids'],
+            'attention_mask': question['attention_mask'],
+            'positive_ids': positive['input_ids'],
+            'positive_mask': positive['attention_mask'],
+            'negative_ids': negative['input_ids'],
+            'negative_mask': negative['attention_mask'],
         }
 
 def main():
@@ -143,7 +159,7 @@ def main():
         gradient_accumulation_steps=args.gradient,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
         gradient_checkpointing=True,  # Save memory
-        dataloader_pin_memory=False,  # Disable pin_memory since we're moving tensors to GPU in collator
+        dataloader_pin_memory=False,
     )
     class TripletCollator:
         def __init__(self, tokenizer, max_batch_size=32):

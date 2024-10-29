@@ -114,6 +114,9 @@ def main():
         def get_embedding(self, input_ids, attention_mask):
             return self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
 
+        def gradient_checkpointing_enable(self, **kwargs):
+            self.base_model.gradient_checkpointing_enable(**kwargs)
+
     base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
     model = TripletModel(base_model)
     
@@ -136,7 +139,8 @@ def main():
         load_best_model_at_end=True,
         fp16=True,
         gradient_accumulation_steps=args.gradient,
-        label_names = ["positive_ids", "positive_mask", "negative_ids", "negative_mask"]
+        label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
+        gradient_checkpointing=True,  # Save memory
     )
 
     class TripletCollator:

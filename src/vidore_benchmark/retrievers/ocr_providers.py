@@ -1,6 +1,4 @@
 from abc import ABC, abstractmethod
-from textwrap import dedent
-
 from PIL import Image
 import os
 import torch
@@ -44,11 +42,7 @@ class GeminiOcrProvider(OcrProvider):
     def _ocr_gemini_once(self, doc_image):
         response = self.gemini_model.generate_content(
             [
-               dedent("""
-               Extract all the text from this image and explain the non-textual elements,
-               preserving structure as much as possible while merging run-on lines and representing lists and tables naturally.
-               Do not discuss iconogrophy, typeface, layout, or other design elements.
-                """),
+               "Extract all the text from this image and explain the non-textual elements, preserving structure as much as possible.",
                doc_image
             ],
             generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048)

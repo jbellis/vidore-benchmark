@@ -60,21 +60,23 @@ class ArxivQADataset(Dataset):
             negative_idx = random.randint(0, len(self.all_ocr_texts) - 1)
         negative_ocr_text = self.all_ocr_texts[negative_idx]
 
-        question_encoding = self.tokenizer(question, truncation=True, padding='max_length', max_length=SEQUENCE_LENGTH,
-                                           return_tensors='pt')
-        positive_ocr_encoding = self.tokenizer(positive_ocr_text, truncation=True, padding='max_length',
-                                               max_length=SEQUENCE_LENGTH, return_tensors='pt')
-        negative_ocr_encoding = self.tokenizer(negative_ocr_text, truncation=True, padding='max_length',
-                                               max_length=SEQUENCE_LENGTH, return_tensors='pt')
+        # Batch encode all texts together to reduce overhead
+        encodings = self.tokenizer(
+            [question, positive_ocr_text, negative_ocr_text],
+            truncation=True,
+            padding='max_length',
+            max_length=SEQUENCE_LENGTH,
+            return_tensors='pt'
+        )
 
         # Format expected by Trainer
         return {
-            'input_ids': question_encoding['input_ids'].squeeze(),
-            'attention_mask': question_encoding['attention_mask'].squeeze(),
-            'positive_ids': positive_ocr_encoding['input_ids'].squeeze(),
-            'positive_mask': positive_ocr_encoding['attention_mask'].squeeze(),
-            'negative_ids': negative_ocr_encoding['input_ids'].squeeze(),
-            'negative_mask': negative_ocr_encoding['attention_mask'].squeeze(),
+            'input_ids': encodings['input_ids'][0],  # Question
+            'attention_mask': encodings['attention_mask'][0],
+            'positive_ids': encodings['input_ids'][1],  # Positive
+            'positive_mask': encodings['attention_mask'][1],
+            'negative_ids': encodings['input_ids'][2],  # Negative
+            'negative_mask': encodings['attention_mask'][2],
         }
 
 def main():
@@ -105,10 +107,10 @@ def main():
             query_emb = self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
             positive_emb = self.base_model(input_ids=positive_ids, attention_mask=positive_mask).last_hidden_state[:, 0, :]
             negative_emb = self.base_model(input_ids=negative_ids, attention_mask=negative_mask).last_hidden_state[:, 0, :]
-            
+
             # Compute triplet loss
             loss = self.loss_fn(query_emb, positive_emb, negative_emb)
-            
+
             return {"loss": loss, "logits": query_emb}
 
         def get_embedding(self, input_ids, attention_mask):
@@ -119,7 +121,7 @@ def main():
 
     base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
     model = TripletModel(base_model)
-    
+
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files,
                                  tokenizer)
@@ -141,33 +143,50 @@ def main():
         gradient_accumulation_steps=args.gradient,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
         gradient_checkpointing=True,  # Save memory
+        dataloader_pin_memory=False,  # Disable pin_memory since we're moving tensors to GPU in collator
     )
-
     class TripletCollator:
-        def __init__(self, tokenizer):
+        def __init__(self, tokenizer, max_batch_size=32):
             self.tokenizer = tokenizer
             self.pad_token_id = tokenizer.pad_token_id
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.max_batch_size = max_batch_size
+            self.max_len = SEQUENCE_LENGTH
+
+            # Preallocate tensors on device
+            self.batch_tensors = {
+                'input_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device),
+                'attention_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device),
+                'positive_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device),
+                'positive_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device),
+                'negative_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device),
+                'negative_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long, device=self.device)
+            }
 
         def __call__(self, features):
-            batch = {}
-            
-            # Pad and create tensor for each key
-            for key in ['input_ids', 'attention_mask', 'positive_ids', 'positive_mask', 'negative_ids', 'negative_mask']:
-                if key in features[0]:
-                    batch[key] = torch.nn.utils.rnn.pad_sequence(
-                        [f[key] for f in features],
-                        batch_first=True,
-                        padding_value=self.pad_token_id if 'ids' in key else 0
-                    )
-            
-            return batch
+            batch_size = len(features)
+            if batch_size > self.max_batch_size:
+                raise ValueError(f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}")
+
+            # Reset tensors
+            for tensor in self.batch_tensors.values():
+                tensor.zero_()
+
+            # Fill preallocated tensors
+            for i, feature in enumerate(features):
+                for key in self.batch_tensors:
+                    seq_len = feature[key].size(0)
+                    self.batch_tensors[key][i, :seq_len] = feature[key].to(self.device, non_blocking=True)
+
+            # Return views of the actual batch size
+            return {k: v[:batch_size] for k, v in self.batch_tensors.items()}
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
-        data_collator=TripletCollator(tokenizer),
+        data_collator=TripletCollator(tokenizer, max_batch_size=args.batch_size),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 

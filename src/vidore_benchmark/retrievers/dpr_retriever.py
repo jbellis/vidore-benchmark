@@ -380,7 +380,7 @@ class DprRetriever(VisionRetriever):
         # Batch encoding of documents
         valid_docs = [(doc_text, doc_hash)
                       for doc_text, doc_hash in zip(self.doc_texts, document_hashes)
-                      if doc_text is not None and not self.db.document_exists(doc_hash)]
+                      if doc_text and not self.db.document_exists(doc_hash)]
 
         if valid_docs:
             texts_to_encode, hashes_to_encode = zip(*valid_docs)

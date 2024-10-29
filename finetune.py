@@ -3,14 +3,13 @@ import json
 import os
 import random
 import torch
-import numpy as np
 from torch.utils.data import Dataset
+from torch.profiler import profile, record_function, ProfilerActivity
 from transformers import (
     AutoTokenizer,
     AutoModel,
     Trainer,
     TrainingArguments,
-    DataCollatorWithPadding,
     EarlyStoppingCallback
 )
 
@@ -168,8 +167,18 @@ def main():
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 
-    # Train the model
-    trainer.train()
+    # Train the model with profiling
+    activities = [
+        ProfilerActivity.CPU,
+        ProfilerActivity.CUDA,
+    ]
+    with profile(activities=activities, profile_memory=True, record_shapes=True) as prof:
+        with record_function("training_loop"):
+            trainer.train()
+    
+    # Print profiler results
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    prof.export_chrome_trace("pytorch_trace.json")
 
     # Save the fine-tuned model
     model_name = args.model.split('/')[-1]

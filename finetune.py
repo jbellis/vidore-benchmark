@@ -135,17 +135,16 @@ def main():
                 query_emb = self.projection(query_emb)
                 positive_emb = self.projection(positive_emb)
                 negative_emb = self.projection(negative_emb)
-
+            
+            # L2 normalize all embeddings
+            query_emb = torch.nn.functional.normalize(query_emb, p=2, dim=1)
+            positive_emb = torch.nn.functional.normalize(positive_emb, p=2, dim=1)
+            negative_emb = torch.nn.functional.normalize(negative_emb, p=2, dim=1)
+            
             # Compute triplet loss
             loss = self.loss_fn(query_emb, positive_emb, negative_emb)
 
             return {"loss": loss, "logits": query_emb}
-
-        def get_embedding(self, input_ids, attention_mask):
-            emb = self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
-            if self.projection is not None:
-                emb = self.projection(emb)
-            return emb
 
         def gradient_checkpointing_enable(self, **kwargs):
             self.base_model.gradient_checkpointing_enable(**kwargs)
@@ -222,12 +221,23 @@ def main():
     # Train the model
     trainer.train()
     
-    # Save the fine-tuned model
+    # Save the fine-tuned model and projection layer
     model_name = args.model.split('/')[-1]
     output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.output_dim}_{args.train_files}')
+    
+    # Save base model and tokenizer
     model.base_model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
-    print(f"Fine-tuned model saved to {output_path}")
+    
+    # Save projection layer if it exists
+    if model.projection is not None:
+        projection_state = {
+            'projection': model.projection.state_dict(),
+            'output_dim': args.output_dim
+        }
+        torch.save(projection_state, os.path.join(output_path, 'projection_layer.pt'))
+    
+    print(f"Fine-tuned model and projection layer saved to {output_path}")
 
 
 if __name__ == "__main__":

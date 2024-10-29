@@ -196,8 +196,6 @@ def main():
 
         def __call__(self, features):
             batch_size = len(features)
-            if batch_size > self.max_batch_size:
-                raise ValueError(f"Batch size {batch_size} exceeds max_batch_size {self.max_batch_size}")
 
             # Reset tensors
             for tensor in self.batch_tensors.values():

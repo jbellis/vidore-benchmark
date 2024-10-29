@@ -106,6 +106,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--gradient", type=int, default=8, help="Gradient accumulation steps to simulate larger batch size")
+    parser.add_argument("--output-dim", type=int, default=1024, help="Output dimension of the embeddings")
     args = parser.parse_args()
 
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
@@ -113,16 +114,27 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     class TripletModel(torch.nn.Module):
-        def __init__(self, base_model):
+        def __init__(self, base_model, output_dim):
             super().__init__()
             self.base_model = base_model
             self.loss_fn = torch.nn.TripletMarginLoss(margin=1.0)
+            # Add projection layer only if we need dimension reduction
+            self.output_dim = output_dim
+            if output_dim != self.base_model.config.hidden_size:
+                self.projection = torch.nn.Linear(self.base_model.config.hidden_size, output_dim)
+            else:
+                self.projection = None
 
         def forward(self, input_ids, attention_mask, positive_ids, positive_mask, negative_ids, negative_mask):
             # Get embeddings for each input
             query_emb = self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
             positive_emb = self.base_model(input_ids=positive_ids, attention_mask=positive_mask).last_hidden_state[:, 0, :]
             negative_emb = self.base_model(input_ids=negative_ids, attention_mask=negative_mask).last_hidden_state[:, 0, :]
+            
+            if self.projection is not None:
+                query_emb = self.projection(query_emb)
+                positive_emb = self.projection(positive_emb)
+                negative_emb = self.projection(negative_emb)
 
             # Compute triplet loss
             loss = self.loss_fn(query_emb, positive_emb, negative_emb)
@@ -130,13 +142,16 @@ def main():
             return {"loss": loss, "logits": query_emb}
 
         def get_embedding(self, input_ids, attention_mask):
-            return self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
+            emb = self.base_model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0, :]
+            if self.projection is not None:
+                emb = self.projection(emb)
+            return emb
 
         def gradient_checkpointing_enable(self, **kwargs):
             self.base_model.gradient_checkpointing_enable(**kwargs)
 
     base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
-    model = TripletModel(base_model)
+    model = TripletModel(base_model, args.output_dim)
 
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files,
@@ -206,22 +221,12 @@ def main():
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 
-    # Train the model with profiling
-    activities = [
-        ProfilerActivity.CPU,
-        ProfilerActivity.CUDA,
-    ]
-    with profile(activities=activities, profile_memory=True, record_shapes=True) as prof:
-        with record_function("training_loop"):
-            trainer.train()
+    # Train the model
+    trainer.train()
     
-    # Print profiler results
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    prof.export_chrome_trace("pytorch_trace.json")
-
     # Save the fine-tuned model
     model_name = args.model.split('/')[-1]
-    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')
+    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.output_dim}_{args.train_files}')
     model.base_model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
     print(f"Fine-tuned model saved to {output_path}")

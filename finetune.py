@@ -126,73 +126,28 @@ def main():
                 self.projection = None
 
         def forward(self, input_ids, attention_mask, positive_ids, positive_mask, negative_ids, negative_mask):
-            # Get embeddings for each input with NaN checks
+            # Get embeddings for each input
             query_out = self.base_model(input_ids=input_ids, attention_mask=attention_mask)
-            if torch.isnan(query_out.last_hidden_state).any():
-                print("WARNING: NaN detected in query base model output")
-                device = query_out.last_hidden_state.device
-                return {
-                    "loss": torch.tensor(0.0, device=device, requires_grad=True),
-                    "logits": torch.zeros_like(query_out.last_hidden_state[:, 0, :])
-                }
             query_emb = query_out.last_hidden_state[:, 0, :]
 
             positive_out = self.base_model(input_ids=positive_ids, attention_mask=positive_mask)
-            if torch.isnan(positive_out.last_hidden_state).any():
-                print("WARNING: NaN detected in positive base model output")
-                device = query_emb.device
-                return {"loss": torch.tensor(0.0, device=device, requires_grad=True), "logits": query_emb}
             positive_emb = positive_out.last_hidden_state[:, 0, :]
 
             negative_out = self.base_model(input_ids=negative_ids, attention_mask=negative_mask)
-            if torch.isnan(negative_out.last_hidden_state).any():
-                print("WARNING: NaN detected in negative base model output")
-                device = query_emb.device
-                return {"loss": torch.tensor(0.0, device=device, requires_grad=True), "logits": query_emb}
             negative_emb = negative_out.last_hidden_state[:, 0, :]
             
             if self.projection is not None:
                 query_emb = self.projection(query_emb)
-                if torch.isnan(query_emb).any():
-                    print("WARNING: NaN detected after query projection")
-                    return {"loss": torch.tensor(0.0, requires_grad=True), "logits": query_emb}
-
                 positive_emb = self.projection(positive_emb)
-                if torch.isnan(positive_emb).any():
-                    print("WARNING: NaN detected after positive projection")
-                    return {"loss": torch.tensor(0.0, requires_grad=True), "logits": query_emb}
-
                 negative_emb = self.projection(negative_emb)
-                if torch.isnan(negative_emb).any():
-                    print("WARNING: NaN detected after negative projection")
-                    return {"loss": torch.tensor(0.0, requires_grad=True), "logits": query_emb}
-            
-            # Check for invalid values
-            if torch.isnan(query_emb).any() or torch.isnan(positive_emb).any() or torch.isnan(negative_emb).any():
-                print("WARNING: NaN detected in embeddings before normalization")
-                device = query_emb.device
-                return {"loss": torch.tensor(0.0, device=device, requires_grad=True), "logits": query_emb}
-
-            # L2 normalize all embeddings with small epsilon for stability
-            eps = 1e-8
-            query_emb = torch.nn.functional.normalize(query_emb, p=2, dim=1, eps=eps)
-            positive_emb = torch.nn.functional.normalize(positive_emb, p=2, dim=1, eps=eps)
-            negative_emb = torch.nn.functional.normalize(negative_emb, p=2, dim=1, eps=eps)
-            
-            # Check for invalid values after normalization
-            if torch.isnan(query_emb).any() or torch.isnan(positive_emb).any() or torch.isnan(negative_emb).any():
-                print("WARNING: NaN detected in embeddings after normalization")
-                device = query_emb.device
-                return {"loss": torch.tensor(0.0, device=device, requires_grad=True), "logits": query_emb}
+                # L2 normalize all embeddings with small epsilon for stability
+                eps = 1e-8
+                query_emb = torch.nn.functional.normalize(query_emb, p=2, dim=1, eps=eps)
+                positive_emb = torch.nn.functional.normalize(positive_emb, p=2, dim=1, eps=eps)
+                negative_emb = torch.nn.functional.normalize(negative_emb, p=2, dim=1, eps=eps)
 
             # Compute triplet loss
             loss = self.loss_fn(query_emb, positive_emb, negative_emb)
-            
-            # Check if loss is valid
-            if torch.isnan(loss):
-                print("WARNING: NaN detected in loss")
-                device = query_emb.device
-                return {"loss": torch.tensor(0.0, device=device, requires_grad=True), "logits": query_emb}
 
             return {"loss": loss, "logits": query_emb}
 

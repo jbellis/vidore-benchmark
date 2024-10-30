@@ -109,6 +109,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--output-dim", type=int, help="Output dimension of the embeddings")
+    parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
     args = parser.parse_args()
 
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
@@ -200,8 +201,8 @@ def main():
         bf16=True,
         gradient_accumulation_steps=gradient_accumulation_steps,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
-        gradient_checkpointing=True,  # Save memory
-        gradient_checkpointing_kwargs={"use_reentrant": False},  # More stable checkpointing
+        gradient_checkpointing=args.checkpoint,
+        gradient_checkpointing_kwargs={"use_reentrant": False} if args.checkpoint else None,  # More stable checkpointing
     )
 
     class TripletCollator:

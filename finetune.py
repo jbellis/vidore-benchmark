@@ -121,6 +121,7 @@ def main():
             # Add projection layer only if we need dimension reduction
             self.output_dim = output_dim
             if output_dim != self.base_model.config.hidden_size:
+                print('Adding projection layer to', output_dim)
                 self.projection = torch.nn.Linear(self.base_model.config.hidden_size, output_dim)
             else:
                 self.projection = None

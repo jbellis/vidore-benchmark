@@ -181,44 +181,30 @@ def main():
         gradient_checkpointing=True,  # Save memory
     )
     class TripletCollator:
-        def __init__(self, tokenizer, max_batch_size=32):
+        def __init__(self, tokenizer):
             self.tokenizer = tokenizer
             self.pad_token_id = tokenizer.pad_token_id
-            self.max_batch_size = max_batch_size
-            self.max_len = SEQUENCE_LENGTH
-
-            # Preallocate tensors on CPU
-            self.batch_tensors = {
-                'input_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long),
-                'attention_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long),
-                'positive_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long),
-                'positive_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long),
-                'negative_ids': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long),
-                'negative_mask': torch.zeros(max_batch_size, SEQUENCE_LENGTH, dtype=torch.long)
-            }
 
         def __call__(self, features):
-            batch_size = len(features)
+            batch = {}
 
-            # Reset tensors
-            for tensor in self.batch_tensors.values():
-                tensor.zero_()
+            # Pad and create tensor for each key
+            for key in ['input_ids', 'attention_mask', 'positive_ids', 'positive_mask', 'negative_ids', 'negative_mask']:
+                if key in features[0]:
+                    batch[key] = torch.nn.utils.rnn.pad_sequence(
+                        [f[key] for f in features],
+                        batch_first=True,
+                        padding_value=self.pad_token_id if 'ids' in key else 0
+                    )
 
-            # Fill preallocated tensors
-            for i, feature in enumerate(features):
-                for key in self.batch_tensors:
-                    seq_len = feature[key].size(0)
-                    self.batch_tensors[key][i, :seq_len] = feature[key]
-
-            # Return views of the actual batch size
-            return {k: v[:batch_size] for k, v in self.batch_tensors.items()}
+            return batch
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
-        data_collator=TripletCollator(tokenizer, max_batch_size=args.batch_size),
+        data_collator=TripletCollator(tokenizer),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 

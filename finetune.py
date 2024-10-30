@@ -19,11 +19,15 @@ SEQUENCE_LENGTH = 512
 
 
 class ArxivQADataset(Dataset):
-    def __init__(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int, tokenizer):
+    def __init__(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int, tokenizer, model_name: str):
         self.tokenizer = tokenizer
         self.encoded_questions = []
         self.encoded_positive_texts = []
         self.encoded_all_texts = []
+        if 'stella' in model_name.lower():
+            self.prompt = "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: {question}"
+        else:
+            self.prompt = None
         self.load_data(preprocessed_file, ocr_dir, start_file, end_file)
 
     def load_data(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int):
@@ -53,6 +57,8 @@ class ArxivQADataset(Dataset):
 
             if file_hash in hash_to_question:
                 question = hash_to_question[file_hash]
+                if self.prompt is not None:
+                    question = self.prompt.format(question=question)
                 # Pre-tokenize the question
                 encoded_q = self.tokenizer(
                     question,
@@ -173,9 +179,9 @@ def main():
     base_model = base_model.to('cuda')
     model = TripletModel(base_model, args.output_dim)
 
-    train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)
+    train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer, args.model)
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files,
-                                 tokenizer)
+                                 tokenizer, args.model)
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,

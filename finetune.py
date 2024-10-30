@@ -1,15 +1,21 @@
 import argparse
+from datetime import datetime
 import json
 import os
 import random
 import torch
 from torch.utils.data import Dataset
+import copy
+import threading
+import shutil
 from transformers import (
     AutoTokenizer,
     AutoModel,
     Trainer,
     TrainingArguments,
-    EarlyStoppingCallback
+    TrainerCallback,
+    TrainerState,
+    TrainerControl
 )
 torch.set_float32_matmul_precision('medium')
 
@@ -105,7 +111,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
     parser.add_argument("--num-epochs", type=int, default=100, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
-    parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
+    parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--output-dim", type=int, help="Output dimension of the embeddings")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
@@ -183,6 +189,11 @@ def main():
     val_dataset = ArxivQADataset(preprocessed_file, ocr_dir, args.train_files, args.train_files + args.val_files,
                                  tokenizer, args.model)
 
+    # Set default output directory if not specified
+    if args.output_dir is None:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        args.output_dir = os.path.join(DATASET_LOCATION, f"checkpoints-{timestamp}")
+
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
@@ -195,8 +206,7 @@ def main():
         logging_dir='./training-logs',
         logging_steps=10,
         eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
+        save_strategy="no",
         bf16=True,
         gradient_accumulation_steps=gradient_accumulation_steps,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
@@ -223,36 +233,95 @@ def main():
 
             return batch
 
+    class AsyncBestModelCallback(TrainerCallback):
+        def __init__(self):
+            self.best_model = None
+            self.best_score = float('inf')
+            self.save_thread = None
+            
+        def on_evaluate(self, _args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+            metrics = kwargs.get("metrics", {})
+            eval_loss = metrics.get("eval_loss")
+            if eval_loss < self.best_score:
+                self.best_score = eval_loss
+                self.no_improve_count = 0
+                # Store deep copy of model state in memory
+                if "model" in kwargs:
+                    self.best_model = copy.deepcopy(kwargs["model"].state_dict())
+                    
+                    # Start background thread to save if previous save is done
+                    if self.save_thread is None or not self.save_thread.is_alive():
+                        self.save_thread = threading.Thread(
+                            target=self._save_model,
+                            args=(self.best_model, args.output_dir, state.global_step)
+                        )
+                        self.save_thread.start()
+            else:
+                self.no_improve_count += 1
+                if self.no_improve_count >= args.patience:
+                    print(f"\nNo improvement for {args.patience} epochs. Stopping training.")
+                    control.should_training_stop = True
+        
+        @staticmethod
+        def _save_model(model_state, output_dir, step):
+            save_path = f"{output_dir}/checkpoint-{step}"
+            os.makedirs(save_path, exist_ok=True)
+            
+            # Split and save base model and projection states
+            base_state = {k: v for k, v in model_state.items() if k.startswith('base_model.')}
+            projection_state = {k: v for k, v in model_state.items() if k.startswith('projection.')}
+            
+            torch.save(model_state, f"{save_path}/pytorch_model.bin")
+            print(f"\nSaved best model from step {step}")
+
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=TripletCollator(tokenizer),
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
+        callbacks=[
+            AsyncBestModelCallback()
+        ]
     )
 
     # Train the model
     trainer.train()
     
-    # Save the fine-tuned model and projection layer
+    # Copy the best checkpoint to final location
     model_name = args.model.split('/')[-1]
     output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.output_dim}_{args.train_files}')
+    os.makedirs(output_path, exist_ok=True)
     
-    # Save base model and tokenizer
-    model.base_model.save_pretrained(output_path)
-    tokenizer.save_pretrained(output_path)
-    print(f"Fine-tuned model saved to {output_path}")
+    # Find the best checkpoint
+    best_checkpoint = None
+    best_step = None
+    for dirname in os.listdir(args.output_dir):
+        if dirname.startswith('checkpoint-'):
+            checkpoint_path = os.path.join(args.output_dir, dirname, 'pytorch_model.bin')
+            if os.path.exists(checkpoint_path):
+                step = int(dirname.split('-')[1])
+                if best_step is None or step > best_step:
+                    best_checkpoint = checkpoint_path
+                    best_step = step
 
-    # Save projection layer if it exists
-    if model.projection is not None:
-        projection_state = {
-            'projection': model.projection.state_dict(),
-            'output_dim': args.output_dim
-        }
-        projection_path = os.path.join(output_path, 'projection_layer.pt')
-        torch.save(projection_state, projection_path)
-        print(f"Projection layer saved to {projection_path}")
+    if best_checkpoint:
+        # Move the best checkpoint file
+        os.makedirs(output_path, exist_ok=True)
+        os.rename(best_checkpoint, os.path.join(output_path, 'pytorch_model.bin'))
+        
+        # Save the tokenizer
+        tokenizer.save_pretrained(output_path)
+        print(f"Best model from step {best_step} moved to {output_path}")
+        
+        # Clean up other checkpoints
+        for dirname in os.listdir(args.output_dir):
+            if dirname.startswith('checkpoint-'):
+                checkpoint_dir = os.path.join(args.output_dir, dirname)
+                shutil.rmtree(checkpoint_dir)
+        print("Cleaned up unused checkpoints")
+    else:
+        print("Warning: No checkpoints found to save!")
 
 if __name__ == "__main__":
     main()

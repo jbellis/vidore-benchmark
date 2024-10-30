@@ -25,6 +25,8 @@ load_dotenv(override=True)
 app = typer.Typer(
     help="CLI for evaluating retrievers on the ViDoRe benchmark.",
     no_args_is_help=True,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False
 )
 
 

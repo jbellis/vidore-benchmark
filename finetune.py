@@ -4,7 +4,6 @@ import os
 import random
 import torch
 from torch.utils.data import Dataset
-from torch.profiler import profile, record_function, ProfilerActivity
 from transformers import (
     AutoTokenizer,
     AutoModel,
@@ -168,6 +167,7 @@ def main():
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        optim="adamw_torch_fused",
         weight_decay=0.01,
         warmup_ratio=0.1,
         logging_dir='./training-logs',
@@ -175,11 +175,13 @@ def main():
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        fp16=True,
+        bf16=True,
         gradient_accumulation_steps=args.gradient,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
         gradient_checkpointing=True,  # Save memory
+        gradient_checkpointing_kwargs={"use_reentrant": False},  # More stable checkpointing
     )
+
     class TripletCollator:
         def __init__(self, tokenizer):
             self.tokenizer = tokenizer

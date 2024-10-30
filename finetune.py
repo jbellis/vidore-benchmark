@@ -241,17 +241,17 @@ def main():
     # Save base model and tokenizer
     model.base_model.save_pretrained(output_path)
     tokenizer.save_pretrained(output_path)
-    
+    print(f"Fine-tuned model saved to {output_path}")
+
     # Save projection layer if it exists
     if model.projection is not None:
         projection_state = {
             'projection': model.projection.state_dict(),
             'output_dim': args.output_dim
         }
-        torch.save(projection_state, os.path.join(output_path, 'projection_layer.pt'))
-    
-    print(f"Fine-tuned model and projection layer saved to {output_path}")
-
+        projection_path = os.path.join(output_path, 'projection_layer.pt')
+        torch.save(projection_state, projection_path)
+        print(f"Projection layer saved to {projection_path}")
 
 if __name__ == "__main__":
     main()

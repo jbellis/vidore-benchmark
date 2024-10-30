@@ -177,10 +177,17 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
                 # not fine-tuned
                 model_path = 'Alibaba-NLP/gte-large-en-v1.5'
             else:
-                model_num = provider.split('-')[-1]
-                model_path = f'/home/jonathan/datasets/arxivqa/fine_tuned_gte-large-en-v1.5_{model_num}'
+                model_subtype = provider.split('gte-large-')[-1]
+                model_path = f"""/home/jonathan/datasets/arxivqa/fine_tuned_gte-large-en-v1.5_{model_subtype.replace('-', '_')}"""
             GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
             GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
+            
+            # Load projection layer if it exists
+            projection_path = os.path.join(model_path, 'projection_layer.pt')
+            if os.path.exists(projection_path):
+                projection_state = torch.load(projection_path)
+                GTE_MODEL.projection = torch.nn.Linear(GTE_MODEL.config.hidden_size, projection_state['output_dim']).cuda()
+                GTE_MODEL.projection.load_state_dict(projection_state['projection'])
         
         batch_dict = GTE_TOKENIZER(texts, max_length=8192, padding=True, truncation=True, return_tensors='pt')
         batch_dict = {k: v.cuda() for k, v in batch_dict.items()}
@@ -188,6 +195,8 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         with torch.no_grad():
             outputs = GTE_MODEL(**batch_dict)
         embeddings = outputs.last_hidden_state[:, 0]
+        if hasattr(GTE_MODEL, 'projection') and GTE_MODEL.projection is not None:
+            embeddings = GTE_MODEL.projection(embeddings)
         embeddings = F.normalize(embeddings, p=2, dim=1)
         return embeddings.cpu().tolist()
     else:
@@ -211,10 +220,10 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'best', 'gte-large']
         # Allow any gte-large-N model
-        if self.embeddings_model.startswith('gte-large-') and self.embeddings_model[10:].isdigit():
+        if self.embeddings_model.startswith('gte-large'):
             pass  # Valid gte-large-N model
         elif self.embeddings_model not in valid_models:
-            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-N where N is a number")
+            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None  # initialized by use_dataset
         self.mode = os.environ.get('VIDORE_SCORE_MODE')
@@ -286,20 +295,32 @@ class DprRetriever(VisionRetriever):
             else:
                 raise ValueError(f"Invalid dataset: {ds.name}")
 
-        if self.embeddings_model == 'openai-v3-large':
-            dim = 1536 * 2
-        elif self.embeddings_model == 'openai-v3-small':
-            dim = 1536
-        elif self.embeddings_model == 'gemini-004':
-            dim = 768
-        elif self.embeddings_model == 'stella':
-            dim = 1024
-        elif self.embeddings_model == 'bge-m3':
-            dim = 1024
-        elif self.embeddings_model.startswith('gte-large'):
-            dim = 1024
+        # Try to parse dimension from model subtype first
+        if 'gte-large-' in self.embeddings_model:
+            try:
+                model_type = self.embeddings_model.split('gte-large')[-1]
+                dim = int(model_type.split('-')[0])
+            except ValueError:
+                dim = None
         else:
-            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
+            dim = None
+            
+        # Fall back to hardcoded dimensions if not parsed
+        if dim is None:
+            if self.embeddings_model == 'openai-v3-large':
+                dim = 1536 * 2
+            elif self.embeddings_model == 'openai-v3-small':
+                dim = 1536
+            elif self.embeddings_model == 'gemini-004':
+                dim = 768
+            elif self.embeddings_model == 'stella':
+                dim = 1024
+            elif self.embeddings_model == 'bge-m3':
+                dim = 1024
+            elif self.embeddings_model.startswith('gte-large'):
+                dim = 1024
+            else:
+                raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):

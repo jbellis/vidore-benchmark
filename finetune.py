@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 import copy
 import threading
 import shutil
+from safetensors.torch import save_file
 from transformers import (
     AutoTokenizer,
     AutoModel,
@@ -266,7 +267,7 @@ def main():
             base_state = {k: v for k, v in model_state.items() if k.startswith('base_model.')}
             projection_state = {k: v for k, v in model_state.items() if k.startswith('projection.')}
             
-            torch.save(model_state, f"{save_path}/pytorch_model.bin")
+            save_file(model_state, f"{save_path}/model.safetensors")
             print(f"\nSaved best model from step {step}")
 
     trainer = Trainer(
@@ -293,7 +294,7 @@ def main():
     best_step = None
     for dirname in os.listdir(args.output_dir):
         if dirname.startswith('checkpoint-'):
-            checkpoint_path = os.path.join(args.output_dir, dirname, 'pytorch_model.bin')
+            checkpoint_path = os.path.join(args.output_dir, dirname, 'model.safetensors')
             if os.path.exists(checkpoint_path):
                 step = int(dirname.split('-')[1])
                 if best_step is None or step > best_step:
@@ -303,11 +304,11 @@ def main():
     if best_checkpoint:
         # Move the best checkpoint file
         os.makedirs(output_path, exist_ok=True)
-        os.rename(best_checkpoint, os.path.join(output_path, 'pytorch_model.bin'))
+        os.rename(best_checkpoint, os.path.join(output_path, 'model.safetensors'))
         
         # Save the tokenizer
         tokenizer.save_pretrained(output_path)
-        print(f"Best model from step {best_step} moved to {output_path}")
+        print(f"Best model from step {best_step} saved to {output_path}")
         
         # Clean up other checkpoints
         for dirname in os.listdir(args.output_dir):

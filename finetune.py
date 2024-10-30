@@ -24,10 +24,11 @@ class ArxivQADataset(Dataset):
         self.encoded_questions = []
         self.encoded_positive_texts = []
         self.encoded_all_texts = []
-        if 'stella' in model_name.lower():
-            self.prompt = "Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: {question}"
+        if 'stella' in model_name or 'Qwen2' in model_name:
+            print('Using prompt prefix when encoding queries for', model_name)
+            self.prompt = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
         else:
-            self.prompt = None
+            self.prompt = ""
         self.load_data(preprocessed_file, ocr_dir, start_file, end_file)
 
     def load_data(self, preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int):
@@ -56,9 +57,7 @@ class ArxivQADataset(Dataset):
             })
 
             if file_hash in hash_to_question:
-                question = hash_to_question[file_hash]
-                if self.prompt is not None:
-                    question = self.prompt.format(question=question)
+                question = self.prompt + hash_to_question[file_hash]
                 # Pre-tokenize the question
                 encoded_q = self.tokenizer(
                     question,

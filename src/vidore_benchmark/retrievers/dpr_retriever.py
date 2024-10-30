@@ -297,11 +297,8 @@ class DprRetriever(VisionRetriever):
 
         # Try to parse dimension from model subtype first
         if 'gte-large-' in self.embeddings_model:
-            try:
-                model_type = self.embeddings_model.split('gte-large')[-1]
-                dim = int(model_type.split('-')[0])
-            except ValueError:
-                dim = None
+            model_type = self.embeddings_model.split('gte-large-')[-1]
+            dim = int(model_type.split('-')[0])
         else:
             dim = None
             

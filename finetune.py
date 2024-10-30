@@ -162,7 +162,7 @@ def main():
             
             pos_loss = self.loss_fn(query_emb, positive_emb, pos_target)
             neg_loss = self.loss_fn(query_emb, negative_emb, neg_target)
-            loss = pos_loss + neg_loss
+            loss = 2.0 * pos_loss + neg_loss
 
             return {"loss": loss, "logits": query_emb}
 

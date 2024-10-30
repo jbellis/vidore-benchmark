@@ -40,6 +40,9 @@ def main():
         input_path = path.join(jpeg_dir, fname)
         output_path = path.join(ocr_dir, fname)
 
+        if path.exists(output_path):
+            continue
+
         ocr_one_file(input_path, output_path, ocr_provider)
 
         # Only increment counter if OCR file exists (meaning OCR succeeded)

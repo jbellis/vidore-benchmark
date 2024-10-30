@@ -11,7 +11,6 @@ from transformers import (
     TrainingArguments,
     EarlyStoppingCallback
 )
-
 torch.set_float32_matmul_precision('medium')
 
 
@@ -103,9 +102,9 @@ def main():
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
-    parser.add_argument("--output-dim", type=int, default=1024, help="Output dimension of the embeddings")
+    parser.add_argument("--output-dim", type=int, help="Output dimension of the embeddings")
     args = parser.parse_args()
-    
+
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
     gradient_accumulation_steps = min(max(128 // args.batch_size, 1), 64)
     effective_batch_size = args.batch_size * gradient_accumulation_steps
@@ -122,12 +121,12 @@ def main():
             self.base_model = base_model
             self.loss_fn = torch.nn.CosineEmbeddingLoss(margin=0.3)
             # Add projection layer only if we need dimension reduction
-            self.output_dim = output_dim
-            if output_dim != self.base_model.config.hidden_size:
+            print('Native encoding dimension is', self.base_model.config.hidden_size)
+            if output_dim is None:
+                self.projection = None
+            else:
                 print('Adding projection layer to', output_dim)
                 self.projection = torch.nn.Linear(self.base_model.config.hidden_size, output_dim)
-            else:
-                self.projection = None
 
         def forward(self, input_ids, attention_mask, positive_ids, positive_mask, negative_ids, negative_mask):
             # Get embeddings for each input
@@ -168,7 +167,15 @@ def main():
         def gradient_checkpointing_enable(self, **kwargs):
             self.base_model.gradient_checkpointing_enable(**kwargs)
 
-    base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True)
+    try:
+        base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True, attn_implementation="flash_attention_2", torch_dtype=torch.bfloat16)
+    except ValueError as e:
+        if "does not support Flash Attention" in str(e):
+            print('Flash attention not supported for', args.model, '; falling back to default attn')
+            base_model = AutoModel.from_pretrained(args.model, trust_remote_code=True, torch_dtype=torch.bfloat16)
+        else:
+            raise
+    base_model = base_model.to('cuda')
     model = TripletModel(base_model, args.output_dim)
 
     train_dataset = ArxivQADataset(preprocessed_file, ocr_dir, 0, args.train_files, tokenizer)

@@ -98,15 +98,19 @@ def main():
     parser = argparse.ArgumentParser(description="Fine-tune GTE-large embeddings model on ArxivQA dataset")
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, default=100, help="Number of files to use for validation")
-    parser.add_argument("--batch-size", type=int, default=7, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
     parser.add_argument("--num-epochs", type=int, default=100, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, default="checkpoints", help="Directory to save model checkpoints")
-    parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before early stopping")
-    parser.add_argument("--gradient", type=int, default=8, help="Gradient accumulation steps to simulate larger batch size")
+    parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--output-dim", type=int, default=1024, help="Output dimension of the embeddings")
     args = parser.parse_args()
-    args.learning_rate = 2e-5 * args.batch_size * args.gradient / (7 * 8)
+    
+    # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
+    gradient_accumulation_steps = min(max(128 // args.batch_size, 1), 64)
+    effective_batch_size = args.batch_size * gradient_accumulation_steps
+    args.learning_rate = 2e-5 * effective_batch_size / 64
+    print(f"Using LR {args.learning_rate} with {gradient_accumulation_steps} steps")
 
     preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
     ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
@@ -186,7 +190,7 @@ def main():
         save_strategy="epoch",
         load_best_model_at_end=True,
         bf16=True,
-        gradient_accumulation_steps=args.gradient,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         label_names=["positive_ids", "positive_mask", "negative_ids", "negative_mask"],
         gradient_checkpointing=True,  # Save memory
         gradient_checkpointing_kwargs={"use_reentrant": False},  # More stable checkpointing

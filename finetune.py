@@ -155,11 +155,6 @@ def main():
                 query_emb = self.projection(query_emb)
                 positive_emb = self.projection(positive_emb)
                 negative_emb = self.projection(negative_emb)
-                # L2 normalize all embeddings with small epsilon for stability
-                eps = 1e-8
-                query_emb = torch.nn.functional.normalize(query_emb, p=2, dim=1, eps=eps)
-                positive_emb = torch.nn.functional.normalize(positive_emb, p=2, dim=1, eps=eps)
-                negative_emb = torch.nn.functional.normalize(negative_emb, p=2, dim=1, eps=eps)
 
             # CosineEmbeddingLoss uses the target tensor to determine the objective (pos or neg)
             pos_target = torch.ones(query_emb.size(0), device=query_emb.device)

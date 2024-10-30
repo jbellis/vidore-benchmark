@@ -116,7 +116,7 @@ def main():
         def __init__(self, base_model, output_dim):
             super().__init__()
             self.base_model = base_model
-            self.loss_fn = torch.nn.TripletMarginLoss(margin=1.0)
+            self.loss_fn = torch.nn.CosineEmbeddingLoss(margin=0.3)
             # Add projection layer only if we need dimension reduction
             self.output_dim = output_dim
             if output_dim != self.base_model.config.hidden_size:
@@ -146,8 +146,18 @@ def main():
                 positive_emb = torch.nn.functional.normalize(positive_emb, p=2, dim=1, eps=eps)
                 negative_emb = torch.nn.functional.normalize(negative_emb, p=2, dim=1, eps=eps)
 
-            # Compute triplet loss
-            loss = self.loss_fn(query_emb, positive_emb, negative_emb)
+            # CosineEmbeddingLoss uses the target tensor to determine the objective:
+            # target = 1 means minimize distance (maximize similarity)
+            # target = -1 means maximize distance (minimize similarity)
+            pos_target = torch.ones(query_emb.size(0), device=query_emb.device)  # Push query and positive together
+            neg_target = -torch.ones(query_emb.size(0), device=query_emb.device)  # Push query and negative apart
+            
+            # Compute loss for positive pair (should be similar)
+            pos_loss = self.loss_fn(query_emb, positive_emb, pos_target)
+            # Compute loss for negative pair (should be different)
+            neg_loss = self.loss_fn(query_emb, negative_emb, neg_target)
+            # Total loss is the sum of both
+            loss = pos_loss + neg_loss
 
             return {"loss": loss, "logits": query_emb}
 

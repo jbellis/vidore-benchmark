@@ -263,10 +263,13 @@ def main():
             save_path = f"{output_dir}/checkpoint-{step}"
             os.makedirs(save_path, exist_ok=True)
             
-            # Split and save base model and projection states
-            base_state = {k: v for k, v in model_state.items() if k.startswith('base_model.')}
-            projection_state = {k: v for k, v in model_state.items() if k.startswith('projection.')}
+            # Save the complete model configuration
+            base_config = model.base_model.config
+            if model.projection is not None:
+                base_config.projection_dim = model.projection.out_features
+            base_config.save_pretrained(save_path)
             
+            # Save the state dict as-is
             save_file(model_state, f"{save_path}/model.safetensors")
             print(f"\nSaved best model from step {step}")
 

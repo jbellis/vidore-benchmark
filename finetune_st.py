@@ -33,11 +33,10 @@ def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, en
         
         # Read OCR text
         ocr_path = os.path.join(ocr_dir, f"{image_id}.txt")
-        if os.path.exists(ocr_path):
-            with open(ocr_path, 'r') as f:
-                ocr_text = f.read().strip()
-                anchors.append(item['question'])
-                positives.append(ocr_text)
+        with open(ocr_path, 'r') as f:
+            ocr_text = f.read().strip()
+            anchors.append(item['question'])
+            positives.append(ocr_text)
     
     return Dataset.from_dict({
         'anchor': anchors,
@@ -67,10 +66,9 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, en
             all_texts.append(ocr_text)
             
         file_hash = os.path.splitext(filename)[0]
-        if file_hash in hash_to_question:
-            question = hash_to_question[file_hash]
-            anchors.append(question)
-            positives.append(ocr_text)
+        question = hash_to_question[file_hash]
+        anchors.append(question)
+        positives.append(ocr_text)
     
     # Create dataset dictionary
     dataset_dict = {
@@ -138,16 +136,14 @@ def main():
             print(f"Document: {sample['positive'][:500]}...")
         return
 
-    # Initialize model
+    # Initialize model. First try with Flash Attention 2.0, then without if that fails
     try:
-        # First try with Flash Attention 2.0
         model = SentenceTransformer(args.model,
                                   trust_remote_code=True,
                                   model_kwargs={"attn_implementation": "flash_attention_2",
                                               "torch_dtype": torch.bfloat16})
     except ValueError as e:
         if "Flash Attention" in str(e):
-            # Retry without Flash Attention
             print("Flash Attention 2.0 not supported, falling back to default attention")
             model = SentenceTransformer(args.model,
                                       trust_remote_code=True,

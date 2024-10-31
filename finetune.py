@@ -266,7 +266,12 @@ def main():
             # Save the complete model configuration
             base_config = model.base_model.config
             if model.projection is not None:
-                base_config.projection_dim = model.projection.out_features
+                # Save projection layer config
+                base_config.projection = {
+                    'in_features': model.projection.in_features,
+                    'out_features': model.projection.out_features,
+                    'bias': model.projection.bias is not None
+                }
             base_config.save_pretrained(save_path)
             
             # Save the state dict as-is

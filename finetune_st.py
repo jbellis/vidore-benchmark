@@ -17,7 +17,6 @@ def get_dataset_location(dataset: str) -> str:
     if dataset not in dataset_paths:
         raise ValueError(f"Unknown dataset: {dataset}. Available datasets: {list(dataset_paths.keys())}")
     return dataset_paths[dataset]
-SEQUENCE_LENGTH = 512
 
 
 def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, end_idx: int) -> Dataset:

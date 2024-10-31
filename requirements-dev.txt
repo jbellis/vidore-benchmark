@@ -144,7 +144,7 @@ tornado==6.4.1
 tqdm==4.66.4
 traitlets==5.14.3
 transformers>=4.41.2
-triton==2.3.1
+triton
 typer==0.12.3
 typing_extensions==4.12.2
 tzdata==2024.1

@@ -6,6 +6,7 @@ import os
 from datasets import Dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
+from transformers import EarlyStoppingCallback
 
 DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
 SEQUENCE_LENGTH = 512
@@ -89,18 +90,18 @@ def main():
         fp16=True,
         eval_strategy="epoch",
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=1,
         load_best_model_at_end=True,
-        metric_for_best_model="eval_loss"
     )
 
-    # Initialize trainer
+    # Initialize trainer with early stopping
     trainer = SentenceTransformerTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         loss=loss,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 
     # Train the model

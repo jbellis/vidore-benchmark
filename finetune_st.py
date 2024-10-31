@@ -140,10 +140,21 @@ def main():
         return
 
     # Initialize model
-    model = SentenceTransformer(args.model,
-                                trust_remote_code=True,
-                                model_kwargs={"attn_implementation": "flash_attention_2",
+    try:
+        # First try with Flash Attention 2.0
+        model = SentenceTransformer(args.model,
+                                  trust_remote_code=True,
+                                  model_kwargs={"attn_implementation": "flash_attention_2",
                                               "torch_dtype": torch.bfloat16})
+    except ValueError as e:
+        if "Flash Attention" in str(e):
+            # Retry without Flash Attention
+            print("Flash Attention 2.0 not supported, falling back to default attention")
+            model = SentenceTransformer(args.model,
+                                      trust_remote_code=True,
+                                      model_kwargs={"torch_dtype": torch.bfloat16})
+        else:
+            raise e
     
     # Define loss
     loss = losses.MultipleNegativesRankingLoss(model)

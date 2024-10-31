@@ -9,9 +9,41 @@ from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 from transformers import EarlyStoppingCallback
 
-DATASET_LOCATION = "/home/jonathan/datasets/arxivqa"
+def get_dataset_location(dataset: str) -> str:
+    dataset_paths = {
+        'arxiv': "/home/jonathan/datasets/arxivqa",
+        'infovqa': "/home/jonathan/datasets/infovqa",
+    }
+    if dataset not in dataset_paths:
+        raise ValueError(f"Unknown dataset: {dataset}. Available datasets: {list(dataset_paths.keys())}")
+    return dataset_paths[dataset]
 SEQUENCE_LENGTH = 512
 
+
+def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, end_idx: int) -> Dataset:
+    # Load annotations
+    with open(annotations_file, 'r') as f:
+        data = json.load(f)['data'][start_idx:end_idx]
+    
+    anchors = []  # questions
+    positives = []  # matching OCR texts
+    
+    for item in data:
+        # Get image ID from local name (e.g., "20471.jpeg" -> "20471")
+        image_id = os.path.splitext(item['image_local_name'])[0]
+        
+        # Read OCR text
+        ocr_path = os.path.join(ocr_dir, f"{image_id}.txt")
+        if os.path.exists(ocr_path):
+            with open(ocr_path, 'r') as f:
+                ocr_text = f.read().strip()
+                anchors.append(item['question'])
+                positives.append(ocr_text)
+    
+    return Dataset.from_dict({
+        'anchor': anchors,
+        'positive': positives,
+    })
 
 def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int) -> Dataset:
     # Load question mapping
@@ -60,6 +92,7 @@ def main():
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
+    parser.add_argument("--dataset", type=str, default="arxiv", help="Dataset to use for fine-tuning")
     args = parser.parse_args()
 
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
@@ -68,18 +101,27 @@ def main():
     learning_rate = 2e-5 * effective_batch_size / 64
     print(f"Using LR {learning_rate} with {gradient_accumulation_steps} gradient accumulation steps")
 
+    # Get dataset location
+    dataset_location = get_dataset_location(args.dataset)
+
     # Set default output directory if not specified
     if args.output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        args.output_dir = os.path.join(DATASET_LOCATION, f"st-checkpoints-{timestamp}")
+        args.output_dir = os.path.join(dataset_location, f"st-checkpoints-{timestamp}")
 
     # Load datasets
-    preprocessed_file = os.path.join(DATASET_LOCATION, 'preprocessed.jsonl')
-    ocr_dir = os.path.join(DATASET_LOCATION, 'ocr')
-    
-    train_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, 0, args.train_files)
-    val_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, args.train_files,
-                                   args.train_files + args.val_files)
+    if args.dataset == 'arxiv':
+        preprocessed_file = os.path.join(dataset_location, 'preprocessed.jsonl')
+        ocr_dir = os.path.join(dataset_location, 'ocr')
+        train_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, 0, args.train_files)
+        val_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, args.train_files,
+                                       args.train_files + args.val_files)
+    elif args.dataset == 'infovqa':
+        annotations_file = os.path.join(dataset_location, 'json/infographicsVQA_train_v1.0.json')
+        ocr_dir = os.path.join(dataset_location, 'ocr')
+        train_dataset = load_infovqa_dataset(annotations_file, ocr_dir, 0, args.train_files)
+        val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files,
+                                         args.train_files + args.val_files)
 
     # Initialize model
     model = SentenceTransformer(args.model,
@@ -122,7 +164,7 @@ def main():
 
     # Save the final model
     model_name = args.model.split('/')[-1]
-    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')
+    output_path = os.path.join(dataset_location, f'fine_tuned_{model_name}_{args.train_files}')
     model.save(output_path)
     print(f"Model saved to {output_path}")
 

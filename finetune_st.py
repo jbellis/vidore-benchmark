@@ -2,8 +2,9 @@ import argparse
 from datetime import datetime
 import json
 import os
-
+import torch
 from datasets import Dataset
+from transformers import AutoModel
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 from transformers import EarlyStoppingCallback
@@ -58,7 +59,14 @@ def main():
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
+    parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
     args = parser.parse_args()
+
+    # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
+    gradient_accumulation_steps = min(max(128 // args.batch_size, 1), 64)
+    effective_batch_size = args.batch_size * gradient_accumulation_steps
+    learning_rate = 2e-5 * effective_batch_size / 64
+    print(f"Using LR {learning_rate} with {gradient_accumulation_steps} gradient accumulation steps")
 
     # Set default output directory if not specified
     if args.output_dir is None:
@@ -74,7 +82,10 @@ def main():
                                    args.train_files + args.val_files)
 
     # Initialize model
-    model = SentenceTransformer(args.model, trust_remote_code=True)
+    model = SentenceTransformer(args.model,
+                                trust_remote_code=True,
+                                model_kwargs={"attn_implementation": "flash_attention_2",
+                                              "torch_dtype": torch.bfloat16})
     
     # Define loss
     loss = losses.MultipleNegativesRankingLoss(model)
@@ -85,9 +96,11 @@ def main():
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        learning_rate=2e-5,
+        learning_rate=learning_rate,
         warmup_ratio=0.1,
-        fp16=True,
+        bf16=True,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        gradient_checkpointing=args.checkpoint,
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=1,

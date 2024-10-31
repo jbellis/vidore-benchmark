@@ -85,9 +85,9 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, en
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune sentence transformer model on ArxivQA dataset")
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
-    parser.add_argument("--val-files", type=int, default=100, help="Number of files to use for validation")
+    parser.add_argument("--val-files", type=int, help="Number of files to use for validation and early stopping")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--num-epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--num-epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
@@ -115,14 +115,18 @@ def main():
         preprocessed_file = os.path.join(dataset_location, 'preprocessed.jsonl')
         ocr_dir = os.path.join(dataset_location, 'ocr')
         train_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, 0, args.train_files)
-        val_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, args.train_files,
-                                       args.train_files + args.val_files)
+        val_dataset = None
+        if args.val_files:
+            val_dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, args.train_files,
+                                           args.train_files + args.val_files)
     elif args.dataset == 'infovqa':
         annotations_file = os.path.join(dataset_location, 'json/infographicsVQA_train_v1.0.json')
         ocr_dir = os.path.join(dataset_location, 'ocr')
         train_dataset = load_infovqa_dataset(annotations_file, ocr_dir, 0, args.train_files)
-        val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files,
-                                         args.train_files + args.val_files)
+        val_dataset = None
+        if args.val_files:
+            val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files,
+                                             args.train_files + args.val_files)
 
     # Print dataset samples if requested
     if args.print_data:
@@ -155,21 +159,26 @@ def main():
         bf16=True,
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=args.checkpoint,
-        eval_strategy="epoch",
+        eval_strategy="no" if val_dataset is None else "epoch",
         save_strategy="epoch",
         save_total_limit=1,
-        load_best_model_at_end=True,
+        load_best_model_at_end=val_dataset is not None,
     )
 
-    # Initialize trainer with early stopping
-    trainer = SentenceTransformerTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        loss=loss,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
-    )
+    # Initialize trainer with early stopping only if validation is enabled
+    trainer_kwargs = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_dataset,
+        "loss": loss,
+    }
+    if val_dataset is not None:
+        trainer_kwargs.update({
+            "eval_dataset": val_dataset,
+            "callbacks": [EarlyStoppingCallback(early_stopping_patience=args.patience)]
+        })
+    
+    trainer = SentenceTransformerTrainer(**trainer_kwargs)
 
     # Train the model
     trainer.train()

@@ -18,6 +18,7 @@ from nltk import word_tokenize
 from nltk.corpus import stopwords
 from openai import OpenAI
 from rank_bm25 import BM25Okapi
+from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
 
@@ -158,57 +159,12 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
     elif provider.startswith('stella'):
         global STELLA_MODEL, STELLA_TOKENIZER
         if STELLA_MODEL is None:
-            model_path = "/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_None_6400"
-            logger.info(f"Loading Stella model from {model_path}")
-
-            # Load tokenizer
-            STELLA_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
-            
-            # Load base model first
-            model = AutoModel.from_pretrained(
-                "dunzhang/stella_en_400M_v5",
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16
-            )
-            
-            # Then load our fine-tuned weights
-            from safetensors.torch import load_file
-            state_dict = load_file(f"{model_path}/model.safetensors")
-            
-            # Remove 'base_model.' prefix from state dict keys if present
-            cleaned_state_dict = {}
-            for k, v in state_dict.items():
-                if k.startswith('base_model.'):
-                    cleaned_state_dict[k[len('base_model.'):]] = v
-                else:
-                    cleaned_state_dict[k] = v
-                    
-            # Load the cleaned state dict
-            model.load_state_dict(cleaned_state_dict)
-            
-            # Move to device and set dtype
-            model = model.to(dtype=torch.bfloat16)
-            if torch.cuda.is_available():
-                model = model.cuda()
-            model.eval()
-            
-            STELLA_MODEL = model
-        # Tokenize and encode texts
-        texts = ["Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: " + q
-                 for q in texts]
-        inputs = STELLA_TOKENIZER(
-            texts,
-            truncation=True,
-            padding=True,
-            return_tensors="pt"
-        ).to(STELLA_MODEL.device)
-
-        # Get embeddings
-        with torch.no_grad():
-            outputs = STELLA_MODEL(**inputs)
-            embeddings = outputs.last_hidden_state[:, 0, :].cpu().float().numpy()
-        
-        return embeddings.tolist()
+            STELLA_MODEL = SentenceTransformer("/home/jonathan/datasets/arxivqa/st_fine_tuned_stella_en_400M_v5_6400",
+                                               trust_remote_code=True).cuda()
+        if is_query:
+            return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
+        else:
+            return STELLA_MODEL.encode(texts).tolist()
     elif provider.startswith('bge-m3'):
         global BGE_M3_MODEL
         if BGE_M3_MODEL is None:

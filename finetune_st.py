@@ -87,7 +87,7 @@ def main():
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, help="Number of files to use for validation and early stopping")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--num-epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=2, help="Number of epochs to wait for improvement before early stopping")
@@ -162,7 +162,7 @@ def main():
     # Training arguments
     training_args = SentenceTransformerTrainingArguments(
         output_dir=args.output_dir,
-        num_train_epochs=args.num_epochs,
+        num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         learning_rate=learning_rate,

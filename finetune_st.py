@@ -90,7 +90,7 @@ def main():
     parser.add_argument("--num-epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
-    parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
+    parser.add_argument("--patience", type=int, default=2, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
     parser.add_argument("--dataset", type=str, default="arxiv", help="Dataset to use for fine-tuning")
     parser.add_argument("--print-data", type=int, help="Print N samples from the dataset")

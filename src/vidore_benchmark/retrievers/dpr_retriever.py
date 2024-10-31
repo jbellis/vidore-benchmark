@@ -4,13 +4,12 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-import voyageai
-import cohere
 import google.generativeai as genai
 import numpy as np
 import tiktoken
 import torch
-from FlagEmbedding import BGEM3FlagModel, FlagReranker
+import torch.nn.functional as F
+from FlagEmbedding import BGEM3FlagModel
 from PIL import Image
 from cassandra.cluster import Session, Cluster
 from colbert_live.db.astra import execute_concurrent_async
@@ -19,17 +18,17 @@ from nltk import word_tokenize
 from nltk.corpus import stopwords
 from openai import OpenAI
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-from transformers import AutoModelForSequenceClassification, AutoModel, AutoTokenizer
-import torch.nn.functional as F
+from transformers import AutoModel, AutoTokenizer
 
 from vidore_benchmark.retrievers.utils.register_retriever import register_vision_retriever
 from vidore_benchmark.retrievers.vision_retriever import VisionRetriever
 from vidore_benchmark.utils.torch_utils import get_torch_device
 from .colbert_live_retriever import encode_to_bytes
-from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, Qwen2OcrProvider
-from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, RRFRerankProvider, NvidiaRerankProvider
+from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, \
+    Qwen2OcrProvider
+from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, \
+    RRFRerankProvider, NvidiaRerankProvider
 
 """
 This module uses the following environment variables:
@@ -113,6 +112,7 @@ class DprDB:
 
 
 STELLA_MODEL = None
+STELLA_TOKENIZER = None
 BGE_M3_MODEL = None
 GTE_MODEL = None
 GTE_TOKENIZER = None
@@ -156,13 +156,59 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         result = genai.embed_content(model=model, content=texts)
         return result['embedding']
     elif provider.startswith('stella'):
-        global STELLA_MODEL
+        global STELLA_MODEL, STELLA_TOKENIZER
         if STELLA_MODEL is None:
-            STELLA_MODEL = SentenceTransformer("dunzhang/stella_en_1.5B_v5", trust_remote_code=True).cuda()
-        if is_query:
-            return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
-        else:
-            return STELLA_MODEL.encode(texts).tolist()
+            model_path = "/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_None_6400"
+            logger.info(f"Loading Stella model from {model_path}")
+
+            # Load tokenizer
+            STELLA_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
+            
+            # Load base model first
+            model = AutoModel.from_pretrained(
+                "dunzhang/stella_en_400M_v5",
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16
+            )
+            
+            # Then load our fine-tuned weights
+            from safetensors.torch import load_file
+            state_dict = load_file(f"{model_path}/model.safetensors")
+            
+            # Remove 'base_model.' prefix from state dict keys if present
+            cleaned_state_dict = {}
+            for k, v in state_dict.items():
+                if k.startswith('base_model.'):
+                    cleaned_state_dict[k[len('base_model.'):]] = v
+                else:
+                    cleaned_state_dict[k] = v
+                    
+            # Load the cleaned state dict
+            model.load_state_dict(cleaned_state_dict)
+            
+            # Move to device and set dtype
+            model = model.to(dtype=torch.bfloat16)
+            if torch.cuda.is_available():
+                model = model.cuda()
+            model.eval()
+            
+            STELLA_MODEL = model
+        # Tokenize and encode texts
+        texts = ["Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: " + q
+                 for q in texts]
+        inputs = STELLA_TOKENIZER(
+            texts,
+            truncation=True,
+            padding=True,
+            return_tensors="pt"
+        ).to(STELLA_MODEL.device)
+
+        # Get embeddings
+        with torch.no_grad():
+            outputs = STELLA_MODEL(**inputs)
+            embeddings = outputs.last_hidden_state[:, 0, :].cpu().float().numpy()
+        
+        return embeddings.tolist()
     elif provider.startswith('bge-m3'):
         global BGE_M3_MODEL
         if BGE_M3_MODEL is None:
@@ -218,7 +264,7 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3', 'best', 'gte-large']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3', 'best', 'gte-large']
         # Allow any gte-large-N model
         if self.embeddings_model.startswith('gte-large'):
             pass  # Valid gte-large-N model
@@ -310,7 +356,7 @@ class DprRetriever(VisionRetriever):
                 dim = 1536
             elif self.embeddings_model == 'gemini-004':
                 dim = 768
-            elif self.embeddings_model == 'stella':
+            elif 'stella' in self.embeddings_model:
                 dim = 1024
             elif self.embeddings_model == 'bge-m3':
                 dim = 1024
@@ -323,7 +369,7 @@ class DprRetriever(VisionRetriever):
     def keyspace_name(self, dataset_name):
         ocr_fragment = '' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
         return ''.join(
-            [c if c.isalnum() else '_' for c in (f'{dataset_name}{ocr_fragment}_{self.embeddings_model}').lower()])
+            [c if c.isalnum() else '_' for c in f'{dataset_name}{ocr_fragment}_{self.embeddings_model}'.lower()])
 
     @property
     def use_visual_embedding(self) -> bool:
@@ -505,5 +551,4 @@ class DprRetriever(VisionRetriever):
 
     def get_save_all_path(self, output_path):
         return self.get_save_one_path(output_path, 'all')
-from abc import ABC, abstractmethod
 

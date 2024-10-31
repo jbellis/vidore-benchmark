@@ -109,7 +109,7 @@ def main():
 
     # Save the final model
     model_name = args.model.split('/')[-1]
-    output_path = os.path.join(DATASET_LOCATION, f'st_fine_tuned_{model_name}_{args.train_files}')
+    output_path = os.path.join(DATASET_LOCATION, f'fine_tuned_{model_name}_{args.train_files}')
     model.save(output_path)
     print(f"Model saved to {output_path}")
 

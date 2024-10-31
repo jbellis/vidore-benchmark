@@ -159,7 +159,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
     elif provider.startswith('stella'):
         global STELLA_MODEL, STELLA_TOKENIZER
         if STELLA_MODEL is None:
-            STELLA_MODEL = SentenceTransformer("/home/jonathan/datasets/arxivqa/st_fine_tuned_stella_en_400M_v5_6400",
+            STELLA_MODEL = SentenceTransformer("/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_6400",
                                                trust_remote_code=True).cuda()
         if is_query:
             return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()

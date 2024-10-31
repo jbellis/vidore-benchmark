@@ -174,3 +174,4 @@ llama-index-readers-file
 python-dotenv
 
 tf-keras
+xformers

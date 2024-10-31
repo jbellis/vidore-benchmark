@@ -93,6 +93,7 @@ def main():
     parser.add_argument("--patience", type=int, default=3, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
     parser.add_argument("--dataset", type=str, default="arxiv", help="Dataset to use for fine-tuning")
+    parser.add_argument("--print-data", type=int, help="Print N samples from the dataset")
     args = parser.parse_args()
 
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
@@ -122,6 +123,17 @@ def main():
         train_dataset = load_infovqa_dataset(annotations_file, ocr_dir, 0, args.train_files)
         val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files,
                                          args.train_files + args.val_files)
+
+    # Print dataset samples if requested
+    if args.print_data:
+        print(f"\nPrinting first {args.print_data} samples from training dataset:")
+        for i, sample in enumerate(train_dataset):
+            if i >= args.print_data:
+                break
+            print(f"\nSample {i+1}:")
+            print(f"Query: {sample['anchor']}")
+            print(f"Document: {sample['positive'][:500]}...")
+        return
 
     # Initialize model
     model = SentenceTransformer(args.model,

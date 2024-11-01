@@ -163,7 +163,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
                 model_path = "/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_6400"
             else:
                 model_subtype = provider.split('stella-')[-1]
-                model_path = f"/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_{model_subtype}"
+                model_path = f"/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_{model_subtype.replace('-', '_')}"
             STELLA_MODEL = SentenceTransformer(model_path, trust_remote_code=True).cuda()
         if is_query:
             return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
@@ -317,7 +317,7 @@ class DprRetriever(VisionRetriever):
             elif self.embeddings_model == 'gemini-004':
                 dim = 768
             elif 'stella' in self.embeddings_model:
-                dim = 1024
+                dim = 256
             elif self.embeddings_model == 'bge-m3':
                 dim = 1024
             elif self.embeddings_model.startswith('gte-large'):

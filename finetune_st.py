@@ -1,13 +1,14 @@
 import argparse
-from datetime import datetime
 import json
 import os
+from datetime import datetime
+
 import torch
 from datasets import Dataset
-from transformers import AutoModel
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 from transformers import EarlyStoppingCallback
+
 
 def get_dataset_location(dataset: str) -> str:
     dataset_paths = {

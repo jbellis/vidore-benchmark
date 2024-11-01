@@ -159,8 +159,12 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
     elif provider.startswith('stella'):
         global STELLA_MODEL, STELLA_TOKENIZER
         if STELLA_MODEL is None:
-            STELLA_MODEL = SentenceTransformer("/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_6400",
-                                               trust_remote_code=True).cuda()
+            if provider == 'stella':
+                model_path = "/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_6400"
+            else:
+                model_subtype = provider.split('stella-')[-1]
+                model_path = f"/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_{model_subtype}"
+            STELLA_MODEL = SentenceTransformer(model_path, trust_remote_code=True).cuda()
         if is_query:
             return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
         else:
@@ -221,8 +225,8 @@ class DprRetriever(VisionRetriever):
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3', 'best', 'gte-large']
-        # Allow any gte-large-N model
-        if self.embeddings_model.startswith('gte-large'):
+        # Allow any gte-large-N or stella-X model
+        if self.embeddings_model.startswith('gte-large') or self.embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
         elif self.embeddings_model not in valid_models:
             raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")

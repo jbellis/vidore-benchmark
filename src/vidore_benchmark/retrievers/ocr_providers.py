@@ -2,6 +2,9 @@ from abc import ABC, abstractmethod
 from PIL import Image
 import os
 import torch
+import base64
+from io import BytesIO
+from openai import OpenAI
 from transformers import AutoProcessor, AutoModelForVision2Seq, AwqConfig, Qwen2VLForConditionalGeneration
 from llama_parse import LlamaParse
 from llama_index.core import SimpleDirectoryReader
@@ -17,9 +20,13 @@ class OcrProvider(ABC):
         pass
 
 
+OCR_PROMPT = "Extract all the text from this image and explain the non-textual elements, preserving structure as much as possible."
+
+
 class GeminiOcrProvider(OcrProvider):
     def __init__(self):
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
+        self.openai_client = OpenAI()
 
     def ocr(self, doc_image: Image.Image, doc_hash: str) -> str | None:
         try:
@@ -31,23 +38,45 @@ class GeminiOcrProvider(OcrProvider):
                     return self._ocr_gemini_once(doc_image)
                 except ValueError as e:
                     print(f"Encoding failed even at reduced resolution: {doc_image.size}")
-            elif 'copyright' in str(e):
-                print(f"Copyright error for document {doc_hash}")
-            else:
-                print(f"Encoding error for document {doc_hash}: {str(e)}")
+            elif 'copyright' in str(e) or 'blocked' in str(e):
+                print(f"OCR for {doc_hash} failed with Flash, trying GPT-4V (error was {str(e)})")
+                return self._ocr_gpt4v(doc_image)
         except Exception as e:
-            print(f"Error for document {doc_hash}: {str(e)}")
+            print(f"Unexpected error, skipping document {doc_hash}: {str(e)}")
         return None
 
-    def _ocr_gemini_once(self, doc_image):
+    def _ocr_gemini_once(self, doc_image) -> str:
         response = self.gemini_model.generate_content(
-            [
-               "Extract all the text from this image and explain the non-textual elements, preserving structure as much as possible.",
-               doc_image
-            ],
+            [OCR_PROMPT, doc_image],
             generation_config=genai.types.GenerationConfig(temperature=0, max_output_tokens=2048)
         )
         return response.text
+
+    def _ocr_gpt4v(self, doc_image) -> str:
+        # Convert PIL image to base64
+        buffered = BytesIO()
+        doc_image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": OCR_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{img_str}"
+                            }
+                        }
+                    ]
+                }
+            ],
+        )
+        
+        return response.choices[0].message.content
 
 
 class LlamaOcrProvider(OcrProvider):

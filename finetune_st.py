@@ -46,11 +46,13 @@ def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, en
 
 def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int) -> Dataset:
     # Load question mapping
-    hash_to_question = {}
+    hash_to_questions = {}
     with open(preprocessed_file, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
-            hash_to_question[data['image_hash']] = data['question']
+            if data['image_hash'] not in hash_to_questions:
+                hash_to_questions[data['image_hash']] = []
+            hash_to_questions[data['image_hash']].append(data['question'])
 
     # Load OCR texts
     all_files = sorted(os.listdir(ocr_dir))
@@ -58,18 +60,19 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, en
     
     anchors = []  # questions
     positives = []  # matching OCR texts
-    all_texts = []  # store all texts for negative sampling
     
-    # First pass to collect all texts
+    # Process each file and its associated questions
     for filename in selected_files:
         with open(os.path.join(ocr_dir, filename), 'r') as f:
             ocr_text = f.read().strip()
-            all_texts.append(ocr_text)
             
         file_hash = os.path.splitext(filename)[0]
-        question = hash_to_question[file_hash]
-        anchors.append(question)
-        positives.append(ocr_text)
+        assert file_hash in hash_to_questions
+
+        # Add an entry for each question associated with this image
+        for question in hash_to_questions[file_hash]:
+            anchors.append(question)
+            positives.append(ocr_text)
     
     # Create dataset dictionary
     dataset_dict = {

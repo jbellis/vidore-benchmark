@@ -38,7 +38,7 @@ def main():
     processed_count = 0
     for fname in tqdm(jpeg_files, desc="Processing InfoVQA images"):
         input_path = path.join(jpeg_dir, fname)
-        output_path = path.join(ocr_dir, fname)
+        output_path = path.join(ocr_dir, os.path.splitext(fname)[0] + '.txt')
 
         if path.exists(output_path):
             continue

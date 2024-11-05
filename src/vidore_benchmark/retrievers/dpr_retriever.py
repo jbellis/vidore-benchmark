@@ -120,6 +120,8 @@ GTE_TOKENIZER = None
 openai_client = None
 
 truncated_passages = 0
+
+
 def truncate_to(text, model, max_tokens):
     def tokenize(text: str) -> list[int]:
         return model.encode(text, disallowed_special=())
@@ -135,7 +137,7 @@ def truncate_to(text, model, max_tokens):
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     global openai_client
-    if provider == 'nvidia-e5v5':
+    if provider in ['nvidia-e5v5', 'nvidia-llama-v1']:
         if not openai_client:
             nvidia_api_key = os.environ.get("NVIDIA_API_KEY")
             if nvidia_api_key is None:
@@ -146,7 +148,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
             )
         response = openai_client.embeddings.create(
             input=texts,
-            model="nvidia/nv-embedqa-e5-v5",
+            model="nvidia/llama-3.2-nv-embedqa-1b-v1" if provider == 'nvidia-llama-v1' else "nvidia/nv-embedqa-e5-v5",
             encoding_format="float",
             extra_body={"input_type": "query" if is_query else "passage", "truncate": "END"}
         )
@@ -198,17 +200,18 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
                 model_path = f"""/home/jonathan/datasets/arxivqa/fine_tuned_gte-large-en-v1.5_{model_subtype.replace('-', '_')}"""
             GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
             GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
-            
+
             # Load projection layer if it exists
             projection_path = os.path.join(model_path, 'projection_layer.pt')
             if os.path.exists(projection_path):
                 projection_state = torch.load(projection_path)
-                GTE_MODEL.projection = torch.nn.Linear(GTE_MODEL.config.hidden_size, projection_state['output_dim']).cuda()
+                GTE_MODEL.projection = torch.nn.Linear(GTE_MODEL.config.hidden_size,
+                                                       projection_state['output_dim']).cuda()
                 GTE_MODEL.projection.load_state_dict(projection_state['projection'])
-        
+
         batch_dict = GTE_TOKENIZER(texts, max_length=8192, padding=True, truncation=True, return_tensors='pt')
         batch_dict = {k: v.cuda() for k, v in batch_dict.items()}
-        
+
         with torch.no_grad():
             outputs = GTE_MODEL(**batch_dict)
         embeddings = outputs.last_hidden_state[:, 0]
@@ -235,12 +238,14 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3', 'best', 'gte-large', 'nvidia-e5v5']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
+                        'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1']
         # Allow any gte-large-N or stella-X model
         if self.embeddings_model.startswith('gte-large') or self.embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
         elif self.embeddings_model not in valid_models:
-            raise ValueError(f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")
+            raise ValueError(
+                f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None  # initialized by use_dataset
         self.mode = os.environ.get('VIDORE_SCORE_MODE')
@@ -318,7 +323,7 @@ class DprRetriever(VisionRetriever):
             dim = int(model_type.split('-')[0])
         else:
             dim = None
-            
+
         # Fall back to hardcoded dimensions if not parsed
         if dim is None:
             if self.embeddings_model == 'openai-v3-large':
@@ -335,6 +340,8 @@ class DprRetriever(VisionRetriever):
                 dim = 1024
             elif self.embeddings_model == 'nvidia-e5v5':
                 dim = 1024
+            elif self.embeddings_model == 'nvidia-llama-v1':
+                dim = 2048
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
         self.db = DprDB(self.keyspace_name(ds.name), dim)

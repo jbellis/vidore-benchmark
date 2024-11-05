@@ -173,7 +173,9 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         global STELLA_MODEL, STELLA_TOKENIZER
         if STELLA_MODEL is None:
             if provider == 'stella':
-                model_path = "/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_6400"
+                model_path = "dunzhang/stella_en_400M_v5"
+            elif provider == 'stella-1.5B':
+                model_path = "dunzhang/stella_en_1.5B_v5"
             else:
                 model_subtype = provider.split('stella-')[-1]
                 model_path = f"/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_{model_subtype}"

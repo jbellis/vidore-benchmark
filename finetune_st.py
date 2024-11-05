@@ -88,13 +88,14 @@ def main():
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, help="Number of files to use for validation and early stopping")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=2, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
     parser.add_argument("--dataset", type=str, default="arxiv", help="Dataset to use for fine-tuning")
     parser.add_argument("--print-data", type=int, help="Print N samples from the dataset")
+    parser.add_argument("--eval-steps", type=int, help="Evaluate every N steps. If not set, evaluates every epoch")
     args = parser.parse_args()
 
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
@@ -169,8 +170,10 @@ def main():
         bf16=True,
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=args.checkpoint,
-        eval_strategy="no" if val_dataset is None else "epoch",
-        save_strategy="epoch",
+        eval_strategy="no" if val_dataset is None else "steps" if args.eval_steps else "epoch",
+        eval_steps=args.eval_steps,
+        save_strategy="steps" if args.eval_steps else "epoch",
+        save_steps=args.eval_steps,
         save_total_limit=1,
         load_best_model_at_end=val_dataset is not None,
     )

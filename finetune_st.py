@@ -60,7 +60,7 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, en
     
     anchors = []  # questions
     positives = []  # matching OCR texts
-    
+
     # Process each file and its associated questions
     for filename in selected_files:
         with open(os.path.join(ocr_dir, filename), 'r') as f:
@@ -84,7 +84,8 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, en
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune sentence transformer model on ArxivQA dataset")
+    parser = argparse.ArgumentParser(description="Fine-tune sentence transformer model on ArxivQA dataset",
+                                     allow_abbrev=False)  # Disallow abbreviated arguments
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
     parser.add_argument("--val-files", type=int, help="Number of files to use for validation and early stopping")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
@@ -127,8 +128,12 @@ def main():
         train_dataset = load_infovqa_dataset(annotations_file, ocr_dir, 0, args.train_files)
         val_dataset = None
         if args.val_files:
-            val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files,
-                                             args.train_files + args.val_files)
+            val_dataset = load_infovqa_dataset(annotations_file, ocr_dir, args.train_files, args.val_files)
+    print(f"Training dataset size: {len(train_dataset)}")
+    if val_dataset is not None:
+        print(f"Validation dataset size: {len(val_dataset)}")
+    else:
+        print("No validation dataset")
 
     # Print dataset samples if requested
     if args.print_data:

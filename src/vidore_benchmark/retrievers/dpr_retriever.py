@@ -119,10 +119,39 @@ GTE_MODEL = None
 GTE_TOKENIZER = None
 openai_client = None
 
+truncated_passages = 0
+def truncate_to(text, model, max_tokens):
+    def tokenize(text: str) -> list[int]:
+        return model.encode(text, disallowed_special=())
+
+    raw_tokens = list(tokenize(text))
+    if len(raw_tokens) <= max_tokens:
+        return text
+    global truncated_passages
+    truncated_passages += 1
+    truncated_tokens = raw_tokens[:max_tokens]
+    return model.decode(truncated_tokens)
+
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
-    if provider.startswith('openai'):
-        global openai_client
+    global openai_client
+    if provider == 'nvidia-e5v5':
+        if not openai_client:
+            nvidia_api_key = os.environ.get("NVIDIA_API_KEY")
+            if nvidia_api_key is None:
+                raise ValueError("NVIDIA_API_KEY environment variable is not set")
+            openai_client = OpenAI(
+                api_key=nvidia_api_key,
+                base_url="https://integrate.api.nvidia.com/v1"
+            )
+        response = openai_client.embeddings.create(
+            input=texts,
+            model="nvidia/nv-embedqa-e5-v5",
+            encoding_format="float",
+            extra_body={"input_type": "query" if is_query else "passage", "truncate": "END"}
+        )
+        return [data.embedding for data in response.data]
+    elif provider.startswith('openai'):
         if not openai_client:
             openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -131,25 +160,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         else:
             model_name = 'text-embedding-3-large'
         tiktoken_model = tiktoken.encoding_for_model(model_name)
-
-        def tokenize(text: str) -> list[int]:
-            return tiktoken_model.encode(text, disallowed_special=())
-
-        def token_length(text: str) -> int:
-            return len(list(tokenize(text)))
-
-        def truncate_to(text, max_tokens):
-            truncated_tokens = list(tokenize(text))[:max_tokens]
-            truncated_s = tiktoken_model.decode(truncated_tokens)
-            return truncated_s
-
-        truncated_texts = []
-        for text in texts:
-            if token_length(text) > 8000:
-                global truncated_passages
-                truncated_passages += 1
-                text = truncate_to(text, 8000)
-            truncated_texts.append(text)
+        truncated_texts = [truncate_to(text, tiktoken_model, 8000) for text in texts]
         response = openai_client.embeddings.create(input=truncated_texts, model=model_name)
         return [data.embedding for data in response.data]
     elif provider.startswith('gemini'):
@@ -224,7 +235,7 @@ class DprRetriever(VisionRetriever):
         os.makedirs(self.query_cache_dir, exist_ok=True)
         self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
-        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3', 'best', 'gte-large']
+        valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3', 'best', 'gte-large', 'nvidia-e5v5']
         # Allow any gte-large-N or stella-X model
         if self.embeddings_model.startswith('gte-large') or self.embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
@@ -321,6 +332,8 @@ class DprRetriever(VisionRetriever):
             elif self.embeddings_model == 'bge-m3':
                 dim = 1024
             elif self.embeddings_model.startswith('gte-large'):
+                dim = 1024
+            elif self.embeddings_model == 'nvidia-e5v5':
                 dim = 1024
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")

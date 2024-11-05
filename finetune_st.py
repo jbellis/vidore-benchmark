@@ -44,35 +44,35 @@ def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, en
         'positive': positives,
     })
 
-def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_file: int, end_file: int) -> Dataset:
-    # Load question mapping
+def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_idx: int, end_idx: int) -> Dataset:
+    # First pass: count total questions and build hash_to_questions mapping
     hash_to_questions = {}
+    all_questions = []
     with open(preprocessed_file, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
             if data['image_hash'] not in hash_to_questions:
                 hash_to_questions[data['image_hash']] = []
             hash_to_questions[data['image_hash']].append(data['question'])
+            all_questions.append((data['image_hash'], data['question']))
 
-    # Load OCR texts
-    all_files = sorted(os.listdir(ocr_dir))
-    selected_files = all_files[start_file:end_file]
+    # Select questions based on indices
+    selected_questions = all_questions[start_idx:end_idx]
     
     anchors = []  # questions
     positives = []  # matching OCR texts
 
-    # Process each file and its associated questions
-    for filename in selected_files:
-        with open(os.path.join(ocr_dir, filename), 'r') as f:
-            ocr_text = f.read().strip()
-            
-        file_hash = os.path.splitext(filename)[0]
-        assert file_hash in hash_to_questions
-
-        # Add an entry for each question associated with this image
-        for question in hash_to_questions[file_hash]:
-            anchors.append(question)
-            positives.append(ocr_text)
+    # Process selected questions and load corresponding OCR texts
+    ocr_cache = {}  # Cache OCR texts to avoid reading the same file multiple times
+    for file_hash, question in selected_questions:
+        # Load OCR text (with caching)
+        if file_hash not in ocr_cache:
+            ocr_path = os.path.join(ocr_dir, f"{file_hash}.txt")
+            with open(ocr_path, 'r') as f:
+                ocr_cache[file_hash] = f.read().strip()
+        
+        anchors.append(question)
+        positives.append(ocr_cache[file_hash])
     
     # Create dataset dictionary
     dataset_dict = {

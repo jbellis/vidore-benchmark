@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from collections import defaultdict
 from datetime import datetime
 
 import torch
@@ -45,20 +46,31 @@ def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, en
     })
 
 def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_idx: int, end_idx: int) -> Dataset:
-    # First pass: count total questions and build hash_to_questions mapping
-    hash_to_questions = {}
+    # Load test hashes
+    test_hashes = set()
+    test_dir = "/home/jonathan/Projects/vidore-benchmark/document_cache_flash"
+    for filename in os.listdir(test_dir):
+        if filename.endswith('.txt'):
+            test_hashes.add(filename[:-4])  # Remove .txt extension
+    
+    # First pass: build hash_to_questions mapping, excluding test hashes
+    hash_to_questions = defaultdict(list)
     all_questions = []
+    skipped_questions = 0
     with open(preprocessed_file, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
-            if data['image_hash'] not in hash_to_questions:
-                hash_to_questions[data['image_hash']] = []
-            hash_to_questions[data['image_hash']].append(data['question'])
-            all_questions.append((data['image_hash'], data['question']))
+            print(data['image_hash'])
+            if data['image_hash'] in test_hashes:
+                skipped_questions += 1
+            else:
+                hash_to_questions[data['image_hash']].append(data['question'])
+                all_questions.append((data['image_hash'], data['question']))
+    print(f"Skipped {skipped_questions} questions that matched test set hashes")
 
     # Select questions based on indices
-    selected_questions = all_questions[start_idx:end_idx]
-    
+    selected_questions = all_questions[start_idx:min(end_idx, len(all_questions))]
+
     anchors = []  # questions
     positives = []  # matching OCR texts
 

@@ -179,7 +179,7 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
             else:
                 model_subtype = provider.split('stella-')[-1]
                 model_path = f"/home/jonathan/datasets/arxivqa/fine_tuned_stella_en_400M_v5_{model_subtype}"
-            STELLA_MODEL = SentenceTransformer(model_path, trust_remote_code=True).cuda()
+            STELLA_MODEL = SentenceTransformer(model_path, trust_remote_code=True)
         if is_query:
             return STELLA_MODEL.encode(texts, prompt_name="s2p_query").tolist()
         else:
@@ -201,18 +201,17 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
                 model_subtype = provider.split('gte-large-')[-1]
                 model_path = f"""/home/jonathan/datasets/arxivqa/fine_tuned_gte-large-en-v1.5_{model_subtype.replace('-', '_')}"""
             GTE_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
-            GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True).cuda()
+            GTE_MODEL = AutoModel.from_pretrained(model_path, trust_remote_code=True)
 
             # Load projection layer if it exists
             projection_path = os.path.join(model_path, 'projection_layer.pt')
             if os.path.exists(projection_path):
                 projection_state = torch.load(projection_path)
                 GTE_MODEL.projection = torch.nn.Linear(GTE_MODEL.config.hidden_size,
-                                                       projection_state['output_dim']).cuda()
+                                                       projection_state['output_dim'])
                 GTE_MODEL.projection.load_state_dict(projection_state['projection'])
 
         batch_dict = GTE_TOKENIZER(texts, max_length=8192, padding=True, truncation=True, return_tensors='pt')
-        batch_dict = {k: v.cuda() for k, v in batch_dict.items()}
 
         with torch.no_grad():
             outputs = GTE_MODEL(**batch_dict)

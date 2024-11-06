@@ -106,6 +106,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
     parser.add_argument("--model", type=str, default="Alibaba-NLP/gte-large-en-v1.5", help="Model to fine-tune")
+    parser.add_argument("--revision", type=str, help="Specific revision of the model to use (e.g., commit hash or branch name)")
     parser.add_argument("--output-dir", type=str, help="Directory to save model checkpoints")
     parser.add_argument("--patience", type=int, default=2, help="Number of epochs to wait for improvement before early stopping")
     parser.add_argument("--checkpoint", action="store_true", help="Enable gradient checkpointing (slower, but saves memory)")
@@ -162,17 +163,21 @@ def main():
         return
 
     # Initialize model. First try with Flash Attention 2.0, then without if that fails
+    model_kwargs = {
+        "trust_remote_code": True,
+        "model_kwargs": {"torch_dtype": torch.bfloat16}
+    }
+    if args.revision:
+        model_kwargs["revision"] = args.revision
+
     try:
-        model = SentenceTransformer(args.model,
-                                  trust_remote_code=True,
-                                  model_kwargs={"attn_implementation": "flash_attention_2",
-                                              "torch_dtype": torch.bfloat16})
+        model_kwargs["model_kwargs"]["attn_implementation"] = "flash_attention_2"
+        model = SentenceTransformer(args.model, **model_kwargs)
     except ValueError as e:
         if "Flash Attention" in str(e):
             print("Flash Attention 2.0 not supported, falling back to default attention")
-            model = SentenceTransformer(args.model,
-                                      trust_remote_code=True,
-                                      model_kwargs={"torch_dtype": torch.bfloat16})
+            del model_kwargs["model_kwargs"]["attn_implementation"]
+            model = SentenceTransformer(args.model, **model_kwargs)
         else:
             raise e
     

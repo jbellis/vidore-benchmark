@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime
 
 import torch
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 from transformers import EarlyStoppingCallback
@@ -46,30 +46,33 @@ def load_infovqa_dataset(annotations_file: str, ocr_dir: str, start_idx: int, en
     })
 
 def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_idx: int, end_idx: int) -> Dataset:
-    # Load test hashes
-    test_hashes = set()
-    test_dir = "/home/jonathan/Projects/vidore-benchmark/document_cache_flash"
-    for filename in os.listdir(test_dir):
-        if filename.endswith('.txt'):
-            test_hashes.add(filename[:-4])  # Remove .txt extension
+    # Load test questions from HF dataset
+    test_dataset = load_dataset("vidore/arxivqa_test_subsampled", split="test")
+    test_questions = set(test_dataset["query"])
     
-    # First pass: build hash_to_questions mapping, excluding test hashes
+    # Collect questions, grouped by hash
     hash_to_questions = defaultdict(list)
-    all_questions = []
-    skipped_questions = 0
     with open(preprocessed_file, 'r') as f:
         for line in f:
             data = json.loads(line.strip())
-            print(data['image_hash'])
-            if data['image_hash'] in test_hashes:
-                skipped_questions += 1
-            else:
-                hash_to_questions[data['image_hash']].append(data['question'])
-                all_questions.append((data['image_hash'], data['question']))
-    print(f"Skipped {skipped_questions} questions that matched test set hashes")
+            hash_to_questions[data['image_hash']].append(data['question'])
+
+    # Find the hashes of images questions that match test set questions
+    test_hashes = set(file_hash
+                      for file_hash, questions in hash_to_questions.items()
+                      if any(question in test_questions for question in questions))
+
+    from itertools import chain
+    # Build the list of questions that do not correspond to test hashes
+    train_questions = list(chain.from_iterable(
+        ((file_hash, question) for question in questions)
+        for file_hash, questions in hash_to_questions.items()
+        if file_hash not in test_hashes
+    ))
+    print(f"{len(train_questions)} questions that are not related to test set")
 
     # Select questions based on indices
-    selected_questions = all_questions[start_idx:min(end_idx, len(all_questions))]
+    selected_questions = train_questions[start_idx:end_idx]
 
     anchors = []  # questions
     positives = []  # matching OCR texts

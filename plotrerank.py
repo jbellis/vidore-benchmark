@@ -12,6 +12,7 @@ COLOR_PALETTE = {
     'voyage': '#8c564b',  # brown
     'voyage-lite': '#e377c2',  # pink
     'bge': '#2ca02c',  # green
+    'nvidia': '#d62728',  # red
 }
 
 def get_embeddings_model(dataset):
@@ -91,8 +92,8 @@ def read_ndcg_value(file_path):
 
 
 def main():
-    output_dir = 'outputs'
-    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge']
+    output_dir = 'outputs-dpr'
+    score_types = ['bm25', 'dpr', 'rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge', 'nvidia']
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -110,6 +111,7 @@ def main():
                 voyage_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage.pth'))
                 voyage_lite_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_voyage_lite.pth'))
                 bge_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_bge.pth'))
+                nvidia_file_path = os.path.join(output_dir, filename.replace('_rrf.pth', '_nvidia.pth'))
                 bm25_file_path = os.path.join(output_dir, get_bm25_filename(filename))
                 dpr_filename = get_dpr_filename(filename, dataset)
                 dpr_file_path = os.path.join(output_dir, dpr_filename) if dpr_filename else None
@@ -149,6 +151,12 @@ def main():
                     print(f"Warning: BGE file not found: {bge_file_path}")
                     data[dataset]['bge'] = 0
 
+                if os.path.exists(nvidia_file_path):
+                    data[dataset]['nvidia'] = read_ndcg_value(nvidia_file_path)
+                else:
+                    print(f"Warning: Nvidia file not found: {nvidia_file_path}")
+                    data[dataset]['nvidia'] = 0
+
                 if os.path.exists(bm25_file_path):
                     data[dataset]['bm25'] = read_ndcg_value(bm25_file_path)
                 else:
@@ -167,7 +175,7 @@ def main():
     # Prepare data for plotting
     datasets = list(data.keys())
     x = range(len(datasets))
-    width = 0.11  # Width of each bar (adjusted for 7 score types)
+    width = 0.09  # Width of each bar (adjusted for 9 score types)
 
     fig, ax = plt.subplots(figsize=(24, 10))
 

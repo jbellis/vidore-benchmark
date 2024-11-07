@@ -4,11 +4,7 @@ import os
 from collections import defaultdict
 from datetime import datetime
 
-import sys
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.utils.data.distributed import DistributedSampler
 from datasets import Dataset, load_dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments

@@ -26,7 +26,7 @@ OCR_PROMPT = "Extract all the text from this image and explain the non-textual e
 class GeminiOcrProvider(OcrProvider):
     def __init__(self):
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
-        self.openai_client = OpenAI()
+        self.openai_client = None
 
     def ocr(self, doc_image: Image.Image, doc_hash: str) -> str | None:
         try:
@@ -53,6 +53,8 @@ class GeminiOcrProvider(OcrProvider):
         return response.text
 
     def _ocr_gpt4v(self, doc_image) -> str:
+        if not self.openai_client:
+            self.openai_client = OpenAI()
         # Convert PIL image to base64
         buffered = BytesIO()
         doc_image.save(buffered, format="PNG")

@@ -4,7 +4,11 @@ import os
 from collections import defaultdict
 from datetime import datetime
 
+import sys
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.utils.data.distributed import DistributedSampler
 from datasets import Dataset, load_dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
@@ -99,6 +103,12 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_idx: int, end
 
 
 def main():
+    # Initialize distributed training
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    if local_rank != -1:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+        
     parser = argparse.ArgumentParser(description="Fine-tune sentence transformer model on ArxivQA dataset",
                                      allow_abbrev=False)  # Disallow abbreviated arguments
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
@@ -180,11 +190,23 @@ def main():
             model = SentenceTransformer(args.model, **model_kwargs)
         else:
             raise e
+
+    # Enable static graph mode for distributed training with gradient checkpointing
+    if args.checkpoint and local_rank != -1:
+        transformer = model._first_module()
+        if hasattr(transformer, 'auto_model'):
+            # Configure model for gradient checkpointing
+            transformer.auto_model.config.use_cache = False
+            transformer.auto_model.gradient_checkpointing_enable()
+            # Enable static graph after setting up gradient checkpointing
+            if hasattr(transformer.auto_model, '_set_static_graph'):
+                transformer.auto_model._set_static_graph()
     
     # Define loss
     loss = losses.MultipleNegativesRankingLoss(model)
 
     # Training arguments
+
     training_args = SentenceTransformerTrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
@@ -201,6 +223,9 @@ def main():
         save_steps=args.eval_steps,
         save_total_limit=1,
         load_best_model_at_end=val_dataset is not None,
+        # Enable distributed training
+        ddp_find_unused_parameters=False,
+        local_rank=int(os.environ.get("LOCAL_RANK", -1)),
     )
 
     # Initialize trainer with early stopping only if validation is enabled

@@ -1,10 +1,10 @@
 import os
 import time
 from abc import abstractmethod, ABC
+from pathlib import Path
 
 import torch
 import voyageai
-import requests
 
 
 class RerankProvider(ABC):
@@ -121,38 +121,36 @@ class RRFRerankProvider(RerankProvider):
 
 
 class NvidiaRerankProvider(RerankProvider):
-    def __init__(self):
-        self.invoke_url = "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-3_2-nv-rerankqa-1b-v1/reranking"
-        nvidia_api_key = os.environ.get('NVIDIA_API_KEY')
-        if nvidia_api_key is None:
-            raise ValueError("NVIDIA_API_KEY environment variable is not set")
-        self.headers = {
-            "Authorization": f"Bearer {nvidia_api_key}",
-            "Accept": "application/json",
-        }
-        self.session = requests.Session()
+    def __init__(self, device="cuda"):
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+
+        model_path = "/home/jonathan/Projects/nvidia/nv-rerank-qa_vllama-3.2-nv-rerankqa-1B-v1"
+        if not os.path.exists(model_path):
+            raise ValueError(f"Model path {model_path} does not exist")
+
+        self.device = device
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
+        self.model.to(device)
+        self.model.eval()
 
     def rerank(self, query: str, documents_to_rerank: list[str], document_ids: list[int]) -> dict[int, float]:
-        from vidore_benchmark.retrievers.dpr_retriever import truncate_to
-        import tiktoken
-        model_name = 'text-embedding-3-small'
-        tiktoken_model = tiktoken.encoding_for_model(model_name)
+        pairs = [(query, doc) for doc in documents_to_rerank]
+        
+        with torch.no_grad():
+            inputs = self.tokenizer(
+                pairs,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt"
+            ).to(self.device)
 
-        payload = {
-            "model": "nvidia/llama-3.2-nv-rerankqa-1b-v1",
-            "query": {
-                "text": query
-            },
-            "passages": [{"text": truncate_to(doc, tiktoken_model, 450)} for doc in documents_to_rerank]
-        }
+            results = self.model(**inputs)
+            logits = results.logits.squeeze(-1)
+            scores = torch.sigmoid(logits).tolist()
 
-        response = self.session.post(self.invoke_url, headers=self.headers, json=payload)
-        response.raise_for_status()
-        response_body = response.json()
-
-        # [{'index': 26, 'logit': -2.81640625}, {'index': 30, 'logit': -2.94921875}, ...]
-        reranked_scores = response_body.get('rankings')
-
-        # Create a dictionary mapping document IDs to their reranked scores
-        return {document_ids[score_dict['index']]: score_dict['logit']
-                for score_dict in reranked_scores}
+        return {doc_id: score for doc_id, score in zip(document_ids, scores)}

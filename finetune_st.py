@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import shutil
 from collections import defaultdict
 from datetime import datetime
+import torch.distributed as dist
 
 import torch
 from datasets import Dataset, load_dataset
@@ -231,11 +233,18 @@ def main():
     # Train the model
     trainer.train()
 
-    # Save the final model
-    model_name = args.model.split('/')[-1]
-    output_path = os.path.join(dataset_location, f'fine_tuned_{model_name}_{args.train_files}')
-    model.save(output_path)
-    print(f"Model saved to {output_path}")
+    # Save the final model and cleanup only on the main process
+    is_main_process = not dist.is_initialized() or dist.get_rank() == 0
+    if is_main_process:
+        model_name = args.model.split('/')[-1]
+        output_path = os.path.join(dataset_location, f'fine_tuned_{model_name}_{args.train_files}')
+        model.save(output_path)
+        print(f"Model saved to {output_path}")
+        
+        # Clean up the checkpoints directory
+        if os.path.exists(args.output_dir):
+            shutil.rmtree(args.output_dir)
+            print(f"Cleaned up checkpoint directory: {args.output_dir}")
 
 if __name__ == "__main__":
     main()

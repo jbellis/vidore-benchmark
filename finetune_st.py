@@ -103,12 +103,6 @@ def load_arxiv_dataset(preprocessed_file: str, ocr_dir: str, start_idx: int, end
 
 
 def main():
-    # Initialize distributed training
-    local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if local_rank != -1:
-        torch.cuda.set_device(local_rank)
-        dist.init_process_group(backend="nccl")
-        
     parser = argparse.ArgumentParser(description="Fine-tune sentence transformer model on ArxivQA dataset",
                                      allow_abbrev=False)  # Disallow abbreviated arguments
     parser.add_argument("--train-files", type=int, default=1000, help="Number of files to use for training")
@@ -191,16 +185,12 @@ def main():
         else:
             raise e
 
-    # Enable static graph mode for distributed training with gradient checkpointing
-    if args.checkpoint and local_rank != -1:
+    # Configure gradient checkpointing if enabled
+    if args.checkpoint:
         transformer = model._first_module()
         if hasattr(transformer, 'auto_model'):
-            # Configure model for gradient checkpointing
             transformer.auto_model.config.use_cache = False
             transformer.auto_model.gradient_checkpointing_enable()
-            # Enable static graph after setting up gradient checkpointing
-            if hasattr(transformer.auto_model, '_set_static_graph'):
-                transformer.auto_model._set_static_graph()
     
     # Define loss
     loss = losses.MultipleNegativesRankingLoss(model)
@@ -223,9 +213,8 @@ def main():
         save_steps=args.eval_steps,
         save_total_limit=1,
         load_best_model_at_end=val_dataset is not None,
-        # Enable distributed training
+        # DDP settings
         ddp_find_unused_parameters=False,
-        local_rank=int(os.environ.get("LOCAL_RANK", -1)),
     )
 
     # Initialize trainer with early stopping only if validation is enabled

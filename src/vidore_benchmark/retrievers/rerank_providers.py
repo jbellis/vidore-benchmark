@@ -137,9 +137,13 @@ class NvidiaRerankProvider(RerankProvider):
         self.model.to(device)
         self.model.eval()
 
+        # Enable DataParallel if multiple GPUs are available
+        if torch.cuda.device_count() > 1:
+            self.model = torch.nn.DataParallel(self.model)
+
     def rerank(self, query: str, documents_to_rerank: list[str], document_ids: list[int]) -> dict[int, float]:
-        pairs = [(query, doc) for doc in documents_to_rerank]
-        
+        pairs = [f"query: {query} \n \n passage: {doc}" for doc in documents_to_rerank]
+
         with torch.no_grad():
             inputs = self.tokenizer(
                 pairs,

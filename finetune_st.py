@@ -213,6 +213,8 @@ def main():
         load_best_model_at_end=val_dataset is not None,
         # DDP settings
         ddp_find_unused_parameters=False,
+        # Only save from main process
+        should_save=lambda: not dist.is_initialized() or dist.get_rank() == 0,
     )
 
     # Initialize trainer with early stopping only if validation is enabled

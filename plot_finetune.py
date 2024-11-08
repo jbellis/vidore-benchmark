@@ -25,8 +25,8 @@ DATA = {
         'openai-v3-small': 0.59,
         'gte-large-finetuned': 0.61,
         'openai-v3-large': 0.62,
-        'stella-400M-finetuned': 0.71,
-        'stella-1.5B-finetuned': 0.69
+        'stella-400M-finetuned': 0.69,
+        'stella-1.5B-finetuned': 0.70
     },
     'infovqa': {
         'stella-400M': 0.82,

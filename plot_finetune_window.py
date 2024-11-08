@@ -14,7 +14,7 @@ DATA = {
         'stella-400M': 0.50,
         'openai-v3-large': 0.62,
         'stella-400M-finetuned-256': 0.66,
-        'stella-400M-finetuned-1024': 0.71
+        'stella-400M-finetuned-1024': 0.69
     }
 }
 

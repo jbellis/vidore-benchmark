@@ -12,15 +12,15 @@ from transformers import AutoTokenizer
 
 
 class VoyageLocalReranker:
-    def __init__(self, device="cuda"):
-
+    def __init__(self, device="cpu"):
         model_path = "/mnt/T9/models/voyage-rerank-2-lite/rerank-2-lite"
-
+        self.max_length = 32_000
         self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, model_max_length=self.max_length, use_fast=True)
         self.model = VoyageQForSequenceClassification.from_pretrained(
             model_path,
-            torch_dtype=torch.float16, device_map="auto", attn_implementation="flash_attention_2"
+            torch_dtype=torch.float16,
+            device_map="auto",
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.to(device)
@@ -34,8 +34,9 @@ class VoyageLocalReranker:
                 pairs,
                 padding=True,
                 truncation=True,
-                max_length=512,
-                return_tensors="pt"
+                max_length=self.max_length,
+                return_tensors="pt",
+                verbose=False,
             ).to(self.device)
 
             results = self.model(**inputs)

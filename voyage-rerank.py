@@ -30,28 +30,18 @@ class VoyageLocalReranker:
     def rerank(self, query: str, documents_to_rerank: list[str]) -> dict[int, float]:
         pairs = [f"query: {query} \n \n passage: {doc}" for doc in documents_to_rerank]
 
-        encoded_input = self.tokenizer(
-            pairs,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=self.max_length,
-            verbose=False,
-        )
-        
-        # Truncate to max_length
-        # TODO: why is this slower than just calling model(**encoded_input)?
-        input_ids = encoded_input["input_ids"].to(self.device)
-        attention_mask = encoded_input["attention_mask"].to(self.device)
-        input_ids = input_ids[:, :self.max_length]
-        attention_mask = attention_mask[:, :self.max_length]
-        
         with torch.no_grad():
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask
-            )
-            logits = outputs.logits.squeeze(-1)
+            inputs = self.tokenizer(
+                pairs,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+                verbose=False,
+            ).to(self.device)
+
+            results = self.model(**inputs)
+            logits = results.logits.squeeze(-1)
             scores = torch.sigmoid(logits).tolist()
 
         # Create dictionary mapping indices 0..N-1 to scores

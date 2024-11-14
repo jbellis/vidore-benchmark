@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 
 
 class VoyageLocalReranker:
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cuda"):
         model_path = "/mnt/T9/models/voyage-rerank-2-lite/rerank-2-lite"
         self.max_length = 32_000
         self.device = device
@@ -21,6 +21,7 @@ class VoyageLocalReranker:
             model_path,
             torch_dtype=torch.float16,
             device_map="auto",
+            attn_implementation="flash_attention_2",
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.to(device)
@@ -29,18 +30,28 @@ class VoyageLocalReranker:
     def rerank(self, query: str, documents_to_rerank: list[str]) -> dict[int, float]:
         pairs = [f"query: {query} \n \n passage: {doc}" for doc in documents_to_rerank]
 
-        with torch.no_grad():
-            inputs = self.tokenizer(
-                pairs,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-                verbose=False,
-            ).to(self.device)
+        encoded_input = self.tokenizer(
+            pairs,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+            verbose=False,
+        )
+        
+        input_ids = encoded_input["input_ids"].to(self.device)
+        attention_mask = encoded_input["attention_mask"].to(self.device)
 
-            results = self.model(**inputs)
-            logits = results.logits.squeeze(-1)
+        # Perform the truncation
+        input_ids = input_ids[:, :self.max_length]
+        attention_mask = attention_mask[:, :self.max_length]
+        
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask
+            )
+            logits = outputs.logits.squeeze(-1)
             scores = torch.sigmoid(logits).tolist()
 
         # Create dictionary mapping indices 0..N-1 to scores

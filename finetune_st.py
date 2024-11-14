@@ -8,8 +8,6 @@ import torch.distributed as dist
 
 import torch
 from datasets import Dataset, load_dataset
-from sentence_transformers import SentenceTransformer, losses
-from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 from transformers import EarlyStoppingCallback
 
 
@@ -116,6 +114,9 @@ def main():
     parser.add_argument("--print-data", type=int, help="Print N samples from the dataset")
     parser.add_argument("--eval-steps", type=int, help="Evaluate every N steps. If not set, evaluates every epoch")
     args = parser.parse_args()
+
+    from sentence_transformers import SentenceTransformer, losses
+    from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 
     # Calculate gradient accumulation steps: 128/batch_size, clamped between 1 and 64
     gradient_accumulation_steps = min(max(128 // args.batch_size, 1), 64)

@@ -39,10 +39,10 @@ class VoyageLocalReranker:
             verbose=False,
         )
         
+        # Truncate to max_length
+        # TODO: why is this slower than just calling model(**encoded_input)?
         input_ids = encoded_input["input_ids"].to(self.device)
         attention_mask = encoded_input["attention_mask"].to(self.device)
-
-        # Perform the truncation
         input_ids = input_ids[:, :self.max_length]
         attention_mask = attention_mask[:, :self.max_length]
         
@@ -82,7 +82,7 @@ def main():
     dataset = load_arxiv_dataset(preprocessed_file, ocr_dir, 0, 100000)
     
     times = []
-    for _ in tqdm(range(100)):
+    for _ in tqdm(range(20)):
         start = time.time()
         rerank_random(reranker, dataset)
         times.append(time.time() - start)

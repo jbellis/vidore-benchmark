@@ -40,7 +40,6 @@ class VoyageLocalReranker:
         )
         
         # Truncate to max_length
-        # TODO: why is this slower than just calling model(**encoded_input)?
         input_ids = encoded_input["input_ids"].to(self.device)
         attention_mask = encoded_input["attention_mask"].to(self.device)
         input_ids = input_ids[:, :self.max_length]

@@ -34,11 +34,11 @@ from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRe
 """
 This module uses the following environment variables:
 
-VIDORE_SCORE_MODE: The scoring mode to use ('bm25', 'dpr', or 'reranked')
 VIDORE_OCR: The OCR source to use ('flash', 'unstructured', 'llamaparse', 'idefics2', or 'qwen2')
 VIDORE_DPR_EMBEDDINGS: The embeddings model to use ('openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'bge-m3')
                        or 'best' for the hardcoded best results for each dataset (useful when doing rerank)
 VIDORE_RERANK: The reranker to use when VIDORE_SCORE_MODE is 'reranked' ('cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', or 'bge')
+VIDORE_SCORE_MODE: The scoring mode to use ('bm25', 'dpr', or 'reranked') [ignored if VIDORE_RERANK is specified]
 
 Optional environment variables:
 OPENAI_API_KEY: API key for OpenAI (if using OpenAI embeddings)
@@ -250,15 +250,18 @@ class DprRetriever(VisionRetriever):
                 f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None  # initialized by use_dataset
-        self.mode = os.environ.get('VIDORE_SCORE_MODE')
-        valid_modes = ['bm25', 'dpr', 'reranked']
-        if self.mode not in valid_modes:
-            raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         self.reranker = os.environ.get('VIDORE_RERANK')
         valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia']
-        if self.mode == 'reranked' and self.reranker not in valid_rerankers:
-            raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
+        if self.reranker:
+            if self.reranker not in valid_rerankers:
+                raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
+            self.mode = 'reranked'
+        else:
+            self.mode = os.environ.get('VIDORE_SCORE_MODE')
+            valid_modes = ['bm25', 'dpr', 'reranked']
+            if self.mode not in valid_modes:
+                raise ValueError(f"Invalid scoring mode: {self.mode}. Valid modes: {valid_modes}")
 
         if self.mode == 'reranked':
             if self.reranker == 'cohere':
@@ -349,9 +352,7 @@ class DprRetriever(VisionRetriever):
         self.db = DprDB(self.keyspace_name(ds.name), dim)
 
     def keyspace_name(self, dataset_name):
-        ocr_fragment = '' if self.ocr_source == 'flash' else f'_{self.ocr_source}'
-        return ''.join(
-            [c if c.isalnum() else '_' for c in f'{dataset_name}{ocr_fragment}_{self.embeddings_model}'.lower()])
+        return ''.join([c if c.isalnum() else '_' for c in f'{dataset_name}_{self.ocr_source}_{self.embeddings_model}'.lower()])
 
     @property
     def use_visual_embedding(self) -> bool:

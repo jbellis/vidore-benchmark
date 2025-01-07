@@ -44,7 +44,7 @@ class FlashAI(AI):
         """Helper method to make requests to Gemini API with error handling"""
         # TODO upgrade to gemini-2.0-flash when available for production
         try:
-            response = self.gemini_client.chat.completions.create(
+            response = self.client.chat.completions.create(
                 model="gemini-1.5-flash",
                 messages=messages,
                 stream=False
@@ -171,7 +171,7 @@ class LlmRerankProvider(RerankProvider):
     def __init__(self, ai: AI):
         self.ai = ai
 
-    def _rerank_window(self, query: str, documents: list[str], document_indices: list[int]) -> list[int]:
+    def _rerank_raw(self, query: str, documents: list[str], document_indices: list[int]) -> list[int]:
         """Rerank a single window of documents using DeepSeek API and return ordered indices."""
         # Create prompt with numbered passages
         passages_text = "\n\n".join(f"[{i+1}] {doc}" for i, doc in enumerate(documents))
@@ -191,12 +191,28 @@ class LlmRerankProvider(RerankProvider):
         # Extract just the numbers from the response, ignoring all separators
         import re
         ranks = [int(x) for x in re.findall(r'\d+', ranking_text)]
-        if len(ranks) != len(documents):
-            raise Exception(f"Response {response} did not include all {len(documents)} candidates")
-            
-        # Convert ranks to ordered indices
-        ordered_indices = [document_indices[rank-1] for rank in ranks]
+
+        # Convert ranks to ordered indices, filtering out invalid indices
+        ordered_indices = []
+        for rank in ranks:
+            idx = rank - 1
+            if 0 <= idx < len(document_indices):
+                ordered_indices.append(document_indices[idx])
         return ordered_indices
+
+    def _rerank_window(self, query: str, documents: list[str], document_indices: list[int]) -> list[int]:
+        max_attempts = 3
+        longest_ranking = []
+        
+        for _ in range(max_attempts):
+            reranked = self._rerank_raw(query, documents, document_indices)
+            if len(reranked) == len(documents):
+                return reranked
+            if len(reranked) > len(longest_ranking):
+                longest_ranking = reranked
+                
+        print(f"Failed to get complete ranking after {max_attempts} attempts. Using longest ranking of length {len(longest_ranking)}")
+        return longest_ranking
 
 class SlidingWindowRerankProvider(LlmRerankProvider):
     def __init__(self, ai: AI, window_size: int = 20, step_size: int = 10):

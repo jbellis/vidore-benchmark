@@ -29,7 +29,7 @@ from .colbert_live_retriever import encode_to_bytes
 from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, \
     Qwen2OcrProvider
 from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, \
-    RRFRerankProvider, NvidiaRerankProvider, DeepseekSlidingWindowRerankProvider
+    RRFRerankProvider, NvidiaRerankProvider, DeepseekSlidingWindowRerankProvider, FlashSlidingWindowRerankProvider
 
 """
 This module uses the following environment variables:
@@ -252,7 +252,7 @@ class DprRetriever(VisionRetriever):
         self.db = None  # initialized by use_dataset
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia', 'deepseek_sw']
+        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia', 'deepseek_sw', 'flash_sw']
         if self.reranker:
             if self.reranker not in valid_rerankers:
                 raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
@@ -278,6 +278,8 @@ class DprRetriever(VisionRetriever):
                 self.rerank_provider = NvidiaRerankProvider()
             elif self.reranker == 'deepseek_sw':
                 self.rerank_provider = DeepseekSlidingWindowRerankProvider()
+            elif self.reranker == 'flash_sw':
+                self.rerank_provider = FlashSlidingWindowRerankProvider()
             else:
                 raise ValueError(f"Invalid reranker: {self.reranker}")
         else:

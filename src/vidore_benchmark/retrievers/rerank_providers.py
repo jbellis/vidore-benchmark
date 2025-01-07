@@ -42,8 +42,8 @@ class FlashAI(AI):
 
     def ask(self, messages):
         """Helper method to make requests to Gemini API with error handling"""
-        # TODO upgrade to gemini-2.0-flash when available for production
         try:
+            # TODO upgrade to gemini-2.0-flash when available for production
             response = self.client.chat.completions.create(
                 model="gemini-1.5-flash",
                 messages=messages,

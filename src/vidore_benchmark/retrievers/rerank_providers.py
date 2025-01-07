@@ -4,16 +4,54 @@ from abc import abstractmethod, ABC
 from pathlib import Path
 import torch
 import voyageai
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 
-def deepseek_client() -> OpenAI:
-    """Create and return an OpenAI client configured for Deepseek."""
-    deepseek_api_key = os.environ.get('DEEPSEEK_API_KEY')
-    if not deepseek_api_key:
-        raise ValueError("DEEPSEEK_API_KEY environment variable not set")
-        
-    return OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com")
+class AI(ABC):
+    def ask(self, messages):
+        pass
+
+class DeepSeekAI(AI):
+    def __init__(self):
+        # deepseek client
+        deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+        if not deepseek_api_key:
+            raise Exception("DEEPSEEK_API_KEY environment variable not set")
+        self.client = OpenAI(api_key=deepseek_api_key, base_url="https://api.deepseek.com")
+
+    def ask(self, messages):
+        """Helper method to make requests to DeepSeek API with error handling"""
+        try:
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                stream=False
+            )
+            return response
+        except BadRequestError as e:
+            raise Exception("Error evaluating source code with DeepSeek", e)
+
+class FlashAI(AI):
+    def __init__(self):
+        # gemini client
+        gemini_api_key = os.getenv('GOOGLE_API_KEY')
+        if not gemini_api_key:
+            raise Exception("GOOGLE_API_KEY environment variable not set")
+        self.client = OpenAI(api_key=gemini_api_key,
+                            base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+
+    def ask(self, messages):
+        """Helper method to make requests to Gemini API with error handling"""
+        # TODO upgrade to gemini-2.0-flash when available for production
+        try:
+            response = self.gemini_client.chat.completions.create(
+                model="gemini-1.5-flash",
+                messages=messages,
+                stream=False
+            )
+            return response
+        except BadRequestError as e:
+            raise Exception("Error evaluating source code with Gemini", e)
 
 
 class RerankProvider(ABC):
@@ -130,8 +168,8 @@ class RRFRerankProvider(RerankProvider):
 
 
 class LlmRerankProvider(RerankProvider):
-    def __init__(self, client: OpenAI):
-        self.client = client
+    def __init__(self, ai: AI):
+        self.ai = ai
 
     def _rerank_window(self, query: str, documents: list[str], document_indices: list[int]) -> list[int]:
         """Rerank a single window of documents using DeepSeek API and return ordered indices."""
@@ -146,11 +184,7 @@ class LlmRerankProvider(RerankProvider):
             {"role": "user", "content": f"Search Query: {query}. Rank the passages above based on their relevance to the search query. The passages should be listed in descending order using identifiers, and the most relevant passages should be listed first. Only respond with the ranking results, do not say any other words or explain."}
         ]
 
-        response = self.client.chat.completions.create(
-            model="deepseek-chat",
-            messages=messages,
-            stream=False
-        )
+        response = self.ai.ask(messages)
         
         # Parse ranking from response
         ranking_text = response.choices[0].message.content.strip()
@@ -162,22 +196,21 @@ class LlmRerankProvider(RerankProvider):
             
         # Convert ranks to ordered indices
         ordered_indices = [document_indices[rank-1] for rank in ranks]
-        print(ordered_indices)
         return ordered_indices
 
 class SlidingWindowRerankProvider(LlmRerankProvider):
-    def __init__(self, client: OpenAI, window_size: int = 20, step_size: int = 10):
+    def __init__(self, ai: AI, window_size: int = 20, step_size: int = 10):
         """
         Initialize LLM reranker with sliding window parameters.
 
         Args:
-            client: OpenAI client instance
+            ai: OpenAI client instance
             window_size: Number of passages to rerank in each window
             step_size: Number of passages to slide the window by. Windows will overlap
                       by (window_size - step_size) passages to allow averaging scores
                       across multiple windows.
         """
-        super().__init__(client)
+        super().__init__(ai)
         self.window_size = window_size
         self.step_size = step_size
 
@@ -229,8 +262,12 @@ class SlidingWindowRerankProvider(LlmRerankProvider):
         return final_scores
 
 class DeepseekSlidingWindowRerankProvider(SlidingWindowRerankProvider):
-    def __init__(self, window_size: int = 20, step_size: int = 10):
-        super().__init__(deepseek_client(), window_size, step_size)
+    def __init__(self, window_size: int = 40, step_size: int = 10):
+        super().__init__(DeepSeekAI(), window_size, step_size)
+
+class FlashSlidingWindowRerankProvider(SlidingWindowRerankProvider):
+    def __init__(self, window_size: int = 40, step_size: int = 10):
+        super().__init__(FlashAI(), window_size, step_size)
 
 
 class NvidiaRerankProvider(RerankProvider):

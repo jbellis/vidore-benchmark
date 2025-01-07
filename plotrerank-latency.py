@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Data
-models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge_3090', 'bge_cpu']
+models = ['rrf', 'jina', 'cohere', 'voyage', 'voyage-lite', 'bge_3090']
 times = {
     'rrf': 21,
     'jina': 230,
@@ -10,7 +10,6 @@ times = {
     'voyage': 311,
     'voyage-lite': 240,
     'bge_3090': 115,
-    'bge_cpu': 245
 }
 
 # Calculate speeds
@@ -26,7 +25,6 @@ colors = {
     'voyage': '#8c564b',   # brown
     'voyage-lite': '#e377c2',  # pink
     'bge_3090': '#2ca02c',     # green
-    'bge_cpu': '#006400'       # dark green
 }
 
 # Create the plot
@@ -55,5 +53,5 @@ for bar in bars:
 # Adjust layout to prevent label cutoff
 plt.tight_layout()
 
-# Show the plot
-plt.show()
+# Save the plot
+plt.savefig('rerank-latency.png', dpi=300, bbox_inches='tight')

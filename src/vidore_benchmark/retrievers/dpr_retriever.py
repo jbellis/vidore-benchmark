@@ -29,7 +29,7 @@ from .colbert_live_retriever import encode_to_bytes
 from .ocr_providers import GeminiOcrProvider, UnstructuredOcrProvider, LlamaOcrProvider, Idefics2OcrProvider, \
     Qwen2OcrProvider
 from .rerank_providers import CohereRerankProvider, JinaRerankProvider, VoyageRerankProvider, BGERerankProvider, \
-    RRFRerankProvider, NvidiaRerankProvider
+    RRFRerankProvider, NvidiaRerankProvider, DeepseekSlidingWindowRerankProvider
 
 """
 This module uses the following environment variables:
@@ -238,21 +238,21 @@ class DprRetriever(VisionRetriever):
         print(f'using device {self.device}')
         self.query_cache_dir = os.path.join(os.getcwd(), 'query_cache')
         os.makedirs(self.query_cache_dir, exist_ok=True)
-        self.embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
+        raw_embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
                         'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1']
         # Allow any gte-large-N or stella-X model
-        if self.embeddings_model.startswith('gte-large') or self.embeddings_model.startswith('stella-'):
+        if raw_embeddings_model.startswith('gte-large') or raw_embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
-        elif self.embeddings_model not in valid_models:
+        elif raw_embeddings_model not in valid_models:
             raise ValueError(
-                f"Invalid embeddings model: {self.embeddings_model}. Must be one of {valid_models} or gte-large-X")
+                f"Invalid embeddings model: {raw_embeddings_model}. Must be one of {valid_models} or gte-large-X")
         self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-8b')
         self.db = None  # initialized by use_dataset
 
         self.reranker = os.environ.get('VIDORE_RERANK')
-        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia']
+        valid_rerankers = ['cohere', 'rrf', 'jina', 'voyage', 'voyage-lite', 'bge', 'nvidia', 'deepseek_sw']
         if self.reranker:
             if self.reranker not in valid_rerankers:
                 raise ValueError(f"Invalid reranker: {self.reranker}. Valid rerankers: {valid_rerankers}")
@@ -276,6 +276,8 @@ class DprRetriever(VisionRetriever):
                 self.rerank_provider = RRFRerankProvider()
             elif self.reranker == 'nvidia':
                 self.rerank_provider = NvidiaRerankProvider()
+            elif self.reranker == 'deepseek_sw':
+                self.rerank_provider = DeepseekSlidingWindowRerankProvider()
             else:
                 raise ValueError(f"Invalid reranker: {self.reranker}")
         else:
@@ -306,7 +308,8 @@ class DprRetriever(VisionRetriever):
         dataset_cache_dir = os.path.join(self.document_cache_dir, self.current_dataset_name)
         os.makedirs(dataset_cache_dir, exist_ok=True)
 
-        if self.embeddings_model == 'best':
+        raw_embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
+        if raw_embeddings_model == 'best':
             if 'infovqa' in ds.name:
                 self.embeddings_model = 'stella'
             elif 'docvqa' in ds.name:
@@ -321,6 +324,8 @@ class DprRetriever(VisionRetriever):
                 self.embeddings_model = 'openai-v3-large'
             else:
                 raise ValueError(f"Invalid dataset: {ds.name}")
+        else:
+            self.embeddings_model = raw_embeddings_model
 
         # Try to parse dimension from model subtype first
         if 'gte-large-' in self.embeddings_model:

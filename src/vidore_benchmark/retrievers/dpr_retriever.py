@@ -117,6 +117,7 @@ STELLA_TOKENIZER = None
 BGE_M3_MODEL = None
 GTE_MODEL = None
 GTE_TOKENIZER = None
+MODERNBERT_MODEL = None
 openai_client = None
 
 truncated_passages = 0
@@ -136,6 +137,7 @@ def truncate_to(text, model, max_tokens):
 
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
+    global MODERNBERT_MODEL
     global openai_client
     if provider in ['voyage-3-large', 'voyage-3-lite']:
         import voyageai
@@ -197,6 +199,12 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         with torch.no_grad():
             output = BGE_M3_MODEL.encode(texts, max_length=512)["dense_vecs"]
         return output.tolist()
+    elif provider == 'modernbert-embed':
+        if MODERNBERT_MODEL is None:
+            MODERNBERT_MODEL = SentenceTransformer("nomic-ai/modernbert-embed-base")
+        texts = [f"search_query: {text}" if is_query else f"search_document: {text}" for text in texts]
+        embeddings = MODERNBERT_MODEL.encode(texts)
+        return embeddings.tolist()
     elif provider.startswith('gte-large'):
         global GTE_MODEL, GTE_TOKENIZER
         if GTE_MODEL is None or GTE_TOKENIZER is None:
@@ -247,7 +255,8 @@ class DprRetriever(VisionRetriever):
         raw_embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
-                        'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1', 'voyage-3-large', 'voyage-3-lite']
+                        'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1', 'voyage-3-large', 'voyage-3-lite',
+                        'modernbert-embed']
         # Allow any gte-large-N or stella-X model
         if raw_embeddings_model.startswith('gte-large') or raw_embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
@@ -364,6 +373,8 @@ class DprRetriever(VisionRetriever):
                 dim = 2048
             elif self.embeddings_model == 'voyage-3-lite':
                 dim = 512
+            elif self.embeddings_model == 'modernbert-embed':
+                dim = 768
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
         self.db = DprDB(self.keyspace_name(ds.name), dim)

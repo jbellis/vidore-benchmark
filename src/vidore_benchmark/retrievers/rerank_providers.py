@@ -67,7 +67,7 @@ class RerankProvider(ABC):
 class CohereRerankProvider(RerankProvider):
     def __init__(self):
         import cohere
-        self.cohere_client = cohere.Client(api_key=os.environ.get('COHERE_API_KEY'))
+        self.cohere_client = cohere.ClientV2(api_key=os.environ.get('COHERE_API_KEY'))
 
     def rerank(self, query: str, documents_to_rerank: list[str], document_ids: list[int]) -> dict[int, float]:
         reranked_results = self.cohere_client.rerank(

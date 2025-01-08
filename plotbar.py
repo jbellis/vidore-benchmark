@@ -11,10 +11,17 @@ MODEL_COLORS = {
     'gemini_004': '#fdbf6f',  # light orange
     'openai_v3_small': '#95d679',  # slightly more saturated light green
     'openai_v3_large': '#33a02c',  # darker green
-    'bge_m3': '#b894c2',  # slightly more saturated light purple
-    'bm25': '#b15928',  # brown
-    'gte_large': '#f98080',  # slightly more saturated light pink
+    'voyage_3_large': '#b894c2',  # slightly more saturated light purple
+    'voyage_3_lite': '#cab2d6',  # lighter purple
+    'modernbert_embed': '#f98080',  # slightly more saturated light pink
 }
+MODEL_FAMILIES = [
+    ('gemini_004',),
+    ('openai_v3_large', 'openai_v3_small'),
+    ('voyage_3_large', 'voyage_3_lite'),
+    ('stella',),
+    ('modernbert_embed',),
+]
 
 def extract_dataset_and_model(filename):
     parts = filename.split('_')
@@ -37,7 +44,8 @@ def process_dataset_name(dataset):
 
 def main():
     output_dir = 'outputs-dpr'
-    models = MODEL_COLORS.keys()
+    # Flatten MODEL_FAMILIES into a list of models while preserving order
+    models = [model for family in MODEL_FAMILIES for model in family]
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -55,27 +63,35 @@ def main():
 
     # Prepare data for plotting
     datasets = list(data.keys())
-    x = range(len(datasets))
+    x = [i * 1.1 for i in range(len(datasets))]  # Increase spacing by 10%
     
     width = 0.1125  # Adjusted width (0.15 * 0.75)
 
     fig, ax = plt.subplots(figsize=(24, 12))
 
-    for i, model in enumerate(models):
-        values = [data[dataset].get(model, 0) for dataset in datasets]
-        
-        bars = ax.bar([xi + i * width for xi in x], values, width, label=model, color=MODEL_COLORS[model])
-        
-        # Add text labels on top of each bar
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{height:.3f}',
-                    ha='center', va='bottom', fontsize=8)
+    current_offset = 0
+    for family in MODEL_FAMILIES:
+        for model in family:
+            values = [data[dataset].get(model, 0) for dataset in datasets]
+            
+            bars = ax.bar([xi + current_offset * width for xi in x], values, width, 
+                         label=model, color=MODEL_COLORS[model])
+            
+            # Add text labels on top of each bar
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{height:.3f}',
+                        ha='center', va='bottom', fontsize=8)
+            current_offset += 1
+        # Add space between families (reduced by 60%)
+        current_offset += 0.2
 
     ax.set_ylabel('NDCG@5')
     ax.set_title('NDCG@5 by Dataset and Model')
-    ax.set_xticks([xi + (len(models) - 1) * width / 2 for xi in x])  # Adjusted to center x-axis labels
+    # Calculate total width including spaces between families (reduced by 60%)
+    total_width = sum(len(family) for family in MODEL_FAMILIES) + (len(MODEL_FAMILIES) - 1) * 0.2
+    ax.set_xticks([xi + (total_width - 1) * width / 2 for xi in x])  # Center x-axis labels
     processed_datasets = [process_dataset_name(dataset) for dataset in datasets]
     ax.set_xticklabels(processed_datasets, rotation=0, ha='center')
     ax.legend()

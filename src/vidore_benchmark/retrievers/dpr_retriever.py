@@ -137,7 +137,13 @@ def truncate_to(text, model, max_tokens):
 
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     global openai_client
-    if provider in ['nvidia-e5v5', 'nvidia-llama-v1']:
+    if provider in ['voyage-3-large', 'voyage-3-lite']:
+        import voyageai
+        vo = voyageai.Client()
+        dim = 2048 if provider == 'voyage-3-large' else 512
+        result = vo.embed(texts, model=provider, output_dimension=dim)
+        return result.embeddings
+    elif provider in ['nvidia-e5v5', 'nvidia-llama-v1']:
         if not openai_client:
             nvidia_api_key = os.environ.get("NVIDIA_API_KEY")
             if nvidia_api_key is None:
@@ -241,7 +247,7 @@ class DprRetriever(VisionRetriever):
         raw_embeddings_model = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
-                        'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1']
+                        'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1', 'voyage-3-large', 'voyage-3-lite']
         # Allow any gte-large-N or stella-X model
         if raw_embeddings_model.startswith('gte-large') or raw_embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
@@ -354,6 +360,10 @@ class DprRetriever(VisionRetriever):
                 dim = 1024
             elif self.embeddings_model == 'nvidia-llama-v1':
                 dim = 2048
+            elif self.embeddings_model == 'voyage-3-large':
+                dim = 2048
+            elif self.embeddings_model == 'voyage-3-lite':
+                dim = 512
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
         self.db = DprDB(self.keyspace_name(ds.name), dim)
@@ -529,7 +539,7 @@ class DprRetriever(VisionRetriever):
 
     def get_save_one_path(self, output_path, dataset_name):
         if self.mode == 'dpr':
-            mode_name = self.embeddings_model
+            mode_name = os.environ.get('VIDORE_DPR_EMBEDDINGS')
         elif self.mode == 'bm25':
             mode_name = 'bm25'
         else:

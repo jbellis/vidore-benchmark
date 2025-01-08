@@ -14,13 +14,20 @@ MODEL_COLORS = {
     'voyage_3_large': '#b894c2',  # slightly more saturated light purple
     'voyage_3_lite': '#cab2d6',  # lighter purple
     'modernbert_embed': '#f98080',  # slightly more saturated light pink
+    'cohere_v3': '#ff7f00',  # bright orange
+    'jina_v3': '#e31a1c',    # bright red
+    'nvidia_llama_v1': '#6a3d9a',  # dark purple
+    'stella_1_5b': '#1f78b4',  # darker blue
 }
 MODEL_FAMILIES = [
+    ('modernbert_embed',),
+    ('jina_v3',),
+    ('cohere_v3',),
+    ('nvidia_llama_v1',),
     ('gemini_004',),
     ('openai_v3_large', 'openai_v3_small'),
     ('voyage_3_large', 'voyage_3_lite'),
-    ('stella',),
-    ('modernbert_embed',),
+    ('stella_1_5b', 'stella'),
 ]
 
 def extract_dataset_and_model(filename):
@@ -63,7 +70,7 @@ def main():
 
     # Prepare data for plotting
     datasets = list(data.keys())
-    x = [i * 1.1 for i in range(len(datasets))]  # Increase spacing by 10%
+    x = [i * 1.5 for i in range(len(datasets))]  # Increase spacing by 10%
     
     width = 0.1125  # Adjusted width (0.15 * 0.75)
 

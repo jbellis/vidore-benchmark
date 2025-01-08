@@ -118,6 +118,7 @@ BGE_M3_MODEL = None
 GTE_MODEL = None
 GTE_TOKENIZER = None
 MODERNBERT_MODEL = None
+JINA_MODEL = None
 openai_client = None
 cohere_client = None
 
@@ -221,6 +222,15 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
             input_type="search_query" if is_query else "search_document"
         )
         return response.embeddings.float
+    elif provider == 'jina-v3':
+        global JINA_MODEL
+        if JINA_MODEL is None:
+            from transformers import AutoModel
+            JINA_MODEL = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True).cuda()
+        task = "retrieval.query" if is_query else "retrieval.passage"
+        with torch.no_grad():
+            embeddings = JINA_MODEL.encode(texts, task=task)
+        return embeddings.tolist()
     elif provider.startswith('gte-large'):
         global GTE_MODEL, GTE_TOKENIZER
         if GTE_MODEL is None or GTE_TOKENIZER is None:
@@ -272,7 +282,7 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
                         'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1', 'voyage-3-large', 'voyage-3-lite',
-                        'modernbert-embed', 'cohere-v3']
+                        'modernbert-embed', 'cohere-v3', 'jina-v3']
         # Allow any gte-large-N or stella-X model
         if raw_embeddings_model.startswith('gte-large') or raw_embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
@@ -392,6 +402,8 @@ class DprRetriever(VisionRetriever):
             elif self.embeddings_model == 'modernbert-embed':
                 dim = 768
             elif self.embeddings_model == 'cohere-v3':
+                dim = 1024
+            elif self.embeddings_model == 'jina-v3':
                 dim = 1024
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")

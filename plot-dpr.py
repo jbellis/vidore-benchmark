@@ -68,10 +68,12 @@ def main():
                 print(f"Warning: Unable to extract dataset and model from file '{filename}'. Skipping this file.")
 
     # Prepare data for plotting
-    dataset_pretty_names = ['tatdqa', 'docvqa', 'arxivqa', 'infovqa', 'tabfquad', 'shiftproject']
-    datasets = list(data.keys())
+    dataset_pretty_names = ['docvqa', 'tatdqa', 'arxivqa', 'infovqa', 'shiftproject', 'tabfquad']
+    # Sort datasets to match pretty_names order
+    datasets = sorted(list(data.keys()), 
+                     key=lambda x: dataset_pretty_names.index(process_dataset_name(x)))
     print(datasets)
-    x = [i * 1.5 for i in range(len(datasets))]  # Increase spacing by 10%
+    x = [i * 1.6 for i in range(len(datasets))]  # Increase spacing by 10%
     
     width = 0.1125  # Adjusted width (0.15 * 0.75)
 

@@ -429,6 +429,14 @@ class DprRetriever(VisionRetriever):
                 if extracted_text is not None:
                     with open(cache_file, 'w', encoding='utf-8') as f:
                         f.write(extracted_text)
+            
+            # Write out text by index
+            output_dir = os.path.join('/tmp', self.db.keyspace)
+            os.makedirs(output_dir, exist_ok=True)
+            output_file = os.path.join(output_dir, f"{len(self.doc_texts)}.txt")
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(extracted_text if extracted_text is not None else '')
+            
             self.doc_texts.append(extracted_text if extracted_text is not None else '')
 
         # Batch encoding of documents

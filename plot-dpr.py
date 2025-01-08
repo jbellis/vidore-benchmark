@@ -120,22 +120,26 @@ def main():
     plt.show()
     print("Graph saved as dpr_comparison.png and displayed")
 
-    # Calculate and print average accuracies across datasets
-    print("\nAverage NDCG@5 scores across all datasets:")
+    # Calculate and print normalized average accuracies across datasets
+    print("\nAverage normalized NDCG@5 scores across all datasets:")
     model_averages = {}
     for family in MODEL_FAMILIES:
         for model in family:
-            values = []
+            normalized_values = []
             for dataset in datasets:
                 # Skip French datasets for certain models
                 if model in {'modernbert_embed', 'gemini_004'} and process_dataset_name(dataset) in FRENCH_DATASETS:
                     continue
-                values.append(data[dataset].get(model, 0))
-            if values:  # Only calculate average if we have values
-                avg = sum(values) / len(values)
+                # Find max score for this dataset
+                max_score = max(data[dataset].values())
+                if max_score > 0:  # Avoid division by zero
+                    score = data[dataset].get(model, 0)
+                    normalized_values.append(score / max_score)
+            if normalized_values:  # Only calculate average if we have values
+                avg = sum(normalized_values) / len(normalized_values)
                 model_averages[model] = avg
 
-    # Sort models by average score and print
+    # Sort models by average normalized score and print
     sorted_models = sorted(model_averages.items(), key=lambda x: x[1], reverse=True)
     for model, avg in sorted_models:
         print(f"{model:20} {avg:.3f}")

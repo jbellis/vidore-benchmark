@@ -119,6 +119,7 @@ GTE_MODEL = None
 GTE_TOKENIZER = None
 MODERNBERT_MODEL = None
 openai_client = None
+cohere_client = None
 
 truncated_passages = 0
 
@@ -139,6 +140,7 @@ def truncate_to(text, model, max_tokens):
 def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[list[float]]:
     global MODERNBERT_MODEL
     global openai_client
+    global cohere_client
     if provider in ['voyage-3-large', 'voyage-3-lite']:
         import voyageai
         vo = voyageai.Client()
@@ -205,6 +207,20 @@ def get_embeddings(provider, texts: list[str], is_query: bool = False) -> list[l
         texts = [f"search_query: {text}" if is_query else f"search_document: {text}" for text in texts]
         embeddings = MODERNBERT_MODEL.encode(texts)
         return embeddings.tolist()
+    elif provider == 'cohere-v3':
+        if cohere_client is None:
+            import cohere
+            cohere_api_key = os.environ.get("COHERE_API_KEY")
+            if cohere_api_key is None:
+                raise ValueError("COHERE_API_KEY environment variable is not set")
+            cohere_client = cohere.ClientV2(api_key=cohere_api_key)
+        response = cohere_client.embed(
+            texts=texts,
+            model="embed-multilingual-v3.0",
+            embedding_types=['float'],
+            input_type="search_query" if is_query else "search_document"
+        )
+        return response.embeddings.float
     elif provider.startswith('gte-large'):
         global GTE_MODEL, GTE_TOKENIZER
         if GTE_MODEL is None or GTE_TOKENIZER is None:
@@ -256,7 +272,7 @@ class DprRetriever(VisionRetriever):
         self.current_dataset_name = None
         valid_models = ['openai-v3-large', 'openai-v3-small', 'gemini-004', 'stella', 'stella-finetune', 'bge-m3',
                         'best', 'gte-large', 'nvidia-e5v5', 'nvidia-llama-v1', 'voyage-3-large', 'voyage-3-lite',
-                        'modernbert-embed']
+                        'modernbert-embed', 'cohere-v3']
         # Allow any gte-large-N or stella-X model
         if raw_embeddings_model.startswith('gte-large') or raw_embeddings_model.startswith('stella-'):
             pass  # Valid gte-large-N model
@@ -375,6 +391,8 @@ class DprRetriever(VisionRetriever):
                 dim = 512
             elif self.embeddings_model == 'modernbert-embed':
                 dim = 768
+            elif self.embeddings_model == 'cohere-v3':
+                dim = 1024
             else:
                 raise ValueError(f"Invalid embeddings model: {self.embeddings_model}")
         self.db = DprDB(self.keyspace_name(ds.name), dim)

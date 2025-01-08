@@ -29,6 +29,7 @@ MODEL_FAMILIES = [
     ('voyage_3_large', 'voyage_3_lite'),
     ('stella_1_5b', 'stella'),
 ]
+FRENCH_DATASETS = {'tabfquad', 'shiftproject'}
 
 def extract_dataset_and_model(filename):
     parts = filename.split('_')
@@ -51,8 +52,6 @@ def process_dataset_name(dataset):
 
 def main():
     output_dir = 'outputs-dpr'
-    # Flatten MODEL_FAMILIES into a list of models while preserving order
-    models = [model for family in MODEL_FAMILIES for model in family]
     data = {}
 
     for filename in os.listdir(output_dir):
@@ -69,7 +68,9 @@ def main():
                 print(f"Warning: Unable to extract dataset and model from file '{filename}'. Skipping this file.")
 
     # Prepare data for plotting
+    dataset_pretty_names = ['tatdqa', 'docvqa', 'arxivqa', 'infovqa', 'tabfquad', 'shiftproject']
     datasets = list(data.keys())
+    print(datasets)
     x = [i * 1.5 for i in range(len(datasets))]  # Increase spacing by 10%
     
     width = 0.1125  # Adjusted width (0.15 * 0.75)
@@ -79,17 +80,26 @@ def main():
     current_offset = 0
     for family in MODEL_FAMILIES:
         for model in family:
-            values = [data[dataset].get(model, 0) for dataset in datasets]
+            # Skip modernbert_embed for French datasets
+            values = []
+            for dataset in datasets:
+                if model == 'modernbert_embed' and process_dataset_name(dataset) in FRENCH_DATASETS:
+                    values.append(0)  # Use 0 for French datasets with modernbert_embed
+                else:
+                    values.append(data[dataset].get(model, 0))
             
+            # Special case for stella label
+            display_label = 'stella_400m' if model == 'stella' else model
             bars = ax.bar([xi + current_offset * width for xi in x], values, width, 
-                         label=model, color=MODEL_COLORS[model])
+                         label=display_label, color=MODEL_COLORS[model])
             
-            # Add text labels on top of each bar
+            # Add text labels on top of each bar, but skip zeros
             for bar in bars:
                 height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height,
-                        f'{height:.3f}',
-                        ha='center', va='bottom', fontsize=8)
+                if height > 0:  # Only add label if height is non-zero
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                            f'{height:.3f}',
+                            ha='center', va='bottom', fontsize=8)
             current_offset += 1
         # Add space between families (reduced by 60%)
         current_offset += 0.2

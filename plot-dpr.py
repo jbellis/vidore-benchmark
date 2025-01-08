@@ -21,15 +21,15 @@ MODEL_COLORS = {
 }
 MODEL_FAMILIES = [
     ('modernbert_embed',),
+    ('gemini_004',),
     ('jina_v3',),
     ('cohere_v3',),
     ('nvidia_llama_v1',),
-    ('gemini_004',),
     ('openai_v3_large', 'openai_v3_small'),
     ('voyage_3_large', 'voyage_3_lite'),
     ('stella_1_5b', 'stella'),
 ]
-FRENCH_DATASETS = {'tabfquad', 'shiftproject'}
+FRENCH_DATASETS = {'tabfquad', 'shiftproject'}  # Skip gemini-004 and modernbert-embed for these datasets
 
 def extract_dataset_and_model(filename):
     parts = filename.split('_')
@@ -85,7 +85,7 @@ def main():
             # Skip modernbert_embed for French datasets
             values = []
             for dataset in datasets:
-                if model == 'modernbert_embed' and process_dataset_name(dataset) in FRENCH_DATASETS:
+                if model in {'modernbert_embed', 'gemini_004'} and process_dataset_name(dataset) in FRENCH_DATASETS:
                     values.append(0)  # Use 0 for French datasets with modernbert_embed
                 else:
                     values.append(data[dataset].get(model, 0))
@@ -119,6 +119,26 @@ def main():
     plt.savefig('dpr_comparison.png')
     plt.show()
     print("Graph saved as dpr_comparison.png and displayed")
+
+    # Calculate and print average accuracies across datasets
+    print("\nAverage NDCG@5 scores across all datasets:")
+    model_averages = {}
+    for family in MODEL_FAMILIES:
+        for model in family:
+            values = []
+            for dataset in datasets:
+                # Skip French datasets for certain models
+                if model in {'modernbert_embed', 'gemini_004'} and process_dataset_name(dataset) in FRENCH_DATASETS:
+                    continue
+                values.append(data[dataset].get(model, 0))
+            if values:  # Only calculate average if we have values
+                avg = sum(values) / len(values)
+                model_averages[model] = avg
+
+    # Sort models by average score and print
+    sorted_models = sorted(model_averages.items(), key=lambda x: x[1], reverse=True)
+    for model, avg in sorted_models:
+        print(f"{model:20} {avg:.3f}")
 
 if __name__ == "__main__":
     main()
